@@ -3,9 +3,13 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+defaults:
+  run:
+    shell: bash
 jobs:
   android:
-    runs-on: ubuntu-latest
+    # Exact golden references are generated and reviewed on Windows.
+    runs-on: windows-latest
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
