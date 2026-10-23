@@ -1,0 +1,17 @@
+{
+  "scope": "synthetic blank-frame CPU smoke; not retail accuracy or end-to-end latency",
+  "detector_available": true,
+  "frames": 12,
+  "median_ms": 682.9483000037726,
+  "max_ms": 735.3243999968981,
+  "gemini_schema_smoke": {
+    "success": false,
+    "code": 504,
+    "error_type": "ServerError"
+  },
+  "person_only_detector_smoke": {
+    "scope": "blank-frame synthetic CPU smoke during build",
+    "median_ms": 628.9214999997057,
+    "max_ms": 811.1475000041537
+  }
+}
