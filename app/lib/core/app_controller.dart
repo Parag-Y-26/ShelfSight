@@ -174,6 +174,13 @@ class AppController extends ChangeNotifier {
       try {
         await api.restore(user.uid);
         if (!_current(generation)) return;
+        if (kIsWeb) {
+          final token = await user.getIdToken();
+          if (!_current(generation)) return;
+          if (token == null) throw const ApiFailure('sessionExpired');
+          await api.connectCloud(idToken: token, uid: user.uid);
+          if (!_current(generation)) return;
+        }
         if (api.paired) {
           _armExpiry();
           await cache.open(user.uid, server: api.serverIdentity);
@@ -218,6 +225,10 @@ class AppController extends ChangeNotifier {
   Future<void> resetPassword(String email) =>
       _auth!.sendPasswordResetEmail(email: email.trim());
   Future<void> googleLogin() async {
+    if (kIsWeb) {
+      await _auth!.signInWithPopup(GoogleAuthProvider());
+      return;
+    }
     final signIn = GoogleSignIn.instance;
     const webClientId = String.fromEnvironment('GOOGLE_WEB_CLIENT_ID');
     _googleInitialization ??= signIn.initialize(
@@ -233,6 +244,10 @@ class AppController extends ChangeNotifier {
     await _auth!.signInWithCredential(
       GoogleAuthProvider.credential(idToken: token),
     );
+  }
+
+  Future<void> reconnectCloud() async {
+    await _userChanged(_auth?.currentUser);
   }
 
   Future<void> pair({

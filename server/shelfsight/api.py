@@ -3,6 +3,7 @@
 import asyncio
 import json
 import math
+import secrets
 import time
 from contextlib import asynccontextmanager
 from datetime import timedelta
@@ -12,6 +13,7 @@ import cv2
 from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Request, UploadFile, WebSocket
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
+from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError
 from starlette.concurrency import run_in_threadpool
 from starlette.websockets import WebSocketDisconnect
@@ -31,6 +33,7 @@ from .providers import (
 )
 from .schemas import (
     CalibrationInput,
+    CloudSessionInput,
     FloorInput,
     FloorPatch,
     FrameInput,
@@ -132,6 +135,7 @@ def create_app(
     limiter = RateLimiter()
     runtimes: dict[str, MonitorRuntime] = {}
     scan_lock = asyncio.Semaphore(1)
+    stream_tickets: dict[str, tuple[str, str, float]] = {}
 
     def capabilities() -> dict:
         values = config.data["capabilities"].copy()
@@ -300,6 +304,18 @@ def create_app(
             **sessions.pair(payload.pairing_secret, uid, payload.device_name),
             "capabilities": capabilities(),
         }
+
+    @app.post("/v1/cloud-session")
+    def cloud_session(
+        payload: CloudSessionInput,
+        request: Request,
+        authorization: Annotated[str | None, Header()] = None,
+    ):
+        if not settings.cloud_mode:
+            raise HTTPException(404, "Cloud login is disabled on the local server")
+        limiter.check(request.client.host if request.client else "unknown")
+        uid = app.state.verifier.verify(bearer(authorization))
+        return {**sessions.issue_authenticated(uid, payload.device_name), "capabilities": capabilities()}
 
     @app.get("/v1/session")
     def current_session(uid: Owner, authorization: Annotated[str | None, Header()] = None):
@@ -780,11 +796,40 @@ def create_app(
             "stats": runtime.stats(),
         }
 
+    @app.post("/v1/monitoring/{session_id}/stream/ticket")
+    def stream_ticket(
+        session_id: str, uid: Owner, authorization: Annotated[str | None, Header()] = None
+    ):
+        if not settings.cloud_mode:
+            raise HTTPException(404, "Browser streams are disabled on the local server")
+        session = db.get("monitoring", session_id, uid)
+        if session["status"] != "active":
+            raise HTTPException(409, "Start a fresh monitoring session")
+        now = time.monotonic()
+        for key, (_, _, expiry) in list(stream_tickets.items()):
+            if expiry <= now:
+                stream_tickets.pop(key, None)
+        if len(stream_tickets) >= 4096:
+            raise HTTPException(429, "Too many pending streams")
+        ticket = secrets.token_urlsafe(32)
+        stream_tickets[ticket] = (bearer(authorization), session_id, now + 30)
+        return {"ticket": ticket, "expires_in": 30}
+
     @app.websocket("/v1/monitoring/{session_id}/stream")
     async def stream(websocket: WebSocket, session_id: str):
         runtime, uid = None, None
         try:
-            token = bearer(websocket.headers.get("authorization"))
+            protocol = None
+            if websocket.headers.get("authorization"):
+                token = bearer(websocket.headers.get("authorization"))
+            else:
+                protocols = websocket.scope.get("subprotocols", [])
+                if not settings.cloud_mode or len(protocols) != 2 or protocols[0] != "shelfsight":
+                    raise HTTPException(401, "Stream authentication required")
+                proof = stream_tickets.pop(protocols[1], None)
+                if proof is None or proof[1] != session_id or proof[2] <= time.monotonic():
+                    raise HTTPException(401, "Stream ticket expired or already used")
+                token, protocol = proof[0], "shelfsight"
             uid = sessions.resolve(token)["owner_uid"]
             session = db.get("monitoring", session_id, uid)
             runtime = runtimes.get(session_id)
@@ -796,7 +841,7 @@ def create_app(
         except HTTPException:
             await websocket.close(code=1008, reason="Authentication or monitoring session rejected")
             return
-        await websocket.accept()
+        await websocket.accept(subprotocol=protocol)
         try:
             while True:
                 # Recheck expiry/revocation during long-running connections.
@@ -863,4 +908,6 @@ def create_app(
             headers={"Content-Disposition": "attachment; filename=shelfsight-analytics.csv"},
         )
 
+    if settings.cloud_mode and settings.web_dir.is_dir():
+        app.mount("/", StaticFiles(directory=settings.web_dir, html=True), name="flutter-web")
     return app

@@ -1,11 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui';
 
 import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
+import 'package:image/image.dart' as img;
+import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../core/app_controller.dart';
 import 'frame_encoder.dart';
@@ -40,9 +41,11 @@ class MonitoringController extends ChangeNotifier {
   int acknowledgedFrames = 0, transmittedBytes = 0;
   DateTime? lastAck;
   Map<String, dynamic> _config = {};
-  WebSocket? _socket;
+  WebSocketChannel? _socket;
   StreamSubscription<dynamic>? _subscription;
   Timer? _watchdog;
+  Timer? _webCaptureTimer;
+  bool _capturingWeb = false;
   RawCameraFrame? _pending;
   int? _inflightSequence;
   double? _sourceAspect;
@@ -73,30 +76,32 @@ class MonitoringController extends ChangeNotifier {
       threshold(config, app.store, shelf, key);
 
   int? get maxDimension {
-    final values = zones
-        .map(
-          (zone) =>
-              app.shelves.where((s) => s['id'] == zone.shelfId).firstOrNull,
-        )
-        .map((shelf) => _value('frame_max_dimension', shelf))
-        .whereType<double>()
-        .where((v) => v > 0)
-        .toList();
+    final values =
+        zones
+            .map(
+              (zone) =>
+                  app.shelves.where((s) => s['id'] == zone.shelfId).firstOrNull,
+            )
+            .map((shelf) => _value('frame_max_dimension', shelf))
+            .whereType<double>()
+            .where((v) => v > 0)
+            .toList();
     if (values.isNotEmpty) return values.reduce(math.max).floor();
     final v = _value('frame_max_dimension');
     return v != null && v > 0 ? v.floor() : null;
   }
 
   int? get intervalMs {
-    final values = zones
-        .map(
-          (zone) =>
-              app.shelves.where((s) => s['id'] == zone.shelfId).firstOrNull,
-        )
-        .map((shelf) => _value('monitoring_interval_ms', shelf))
-        .whereType<double>()
-        .where((v) => v > 0)
-        .toList();
+    final values =
+        zones
+            .map(
+              (zone) =>
+                  app.shelves.where((s) => s['id'] == zone.shelfId).firstOrNull,
+            )
+            .map((shelf) => _value('monitoring_interval_ms', shelf))
+            .whereType<double>()
+            .where((v) => v > 0)
+            .toList();
     if (values.isNotEmpty) return values.reduce(math.min).ceil();
     final v = _value('monitoring_interval_ms');
     return v != null && v > 0 ? v.ceil() : null;
@@ -125,9 +130,11 @@ class MonitoringController extends ChangeNotifier {
         return;
       }
       final descriptions = await availableCameras();
-      final back = descriptions
-          .where((c) => c.lensDirection == CameraLensDirection.back)
-          .firstOrNull;
+      final back =
+          descriptions
+              .where((c) => c.lensDirection == CameraLensDirection.back)
+              .firstOrNull ??
+          (kIsWeb ? descriptions.firstOrNull : null);
       if (back == null) {
         phase = MonitorPhase.unavailable;
         errorKey = 'monitorNoRearCamera';
@@ -138,9 +145,10 @@ class MonitoringController extends ChangeNotifier {
         back,
         ResolutionPreset.medium,
         enableAudio: false,
-        imageFormatGroup: Platform.isIOS
-            ? ImageFormatGroup.bgra8888
-            : ImageFormatGroup.yuv420,
+        imageFormatGroup:
+            defaultTargetPlatform == TargetPlatform.iOS
+                ? ImageFormatGroup.bgra8888
+                : ImageFormatGroup.yuv420,
       );
       await candidate.initialize();
       if (_disposed || generation != _cameraGeneration) {
@@ -151,7 +159,15 @@ class MonitoringController extends ChangeNotifier {
       orientation = candidate.value.deviceOrientation.name;
       candidate.addListener(_cameraValueChanged);
       phase = MonitorPhase.calibrating;
-      await candidate.startImageStream(_onImage);
+      if (kIsWeb) {
+        _webCaptureTimer = Timer.periodic(
+          const Duration(milliseconds: 1000),
+          (_) => unawaited(_captureWeb()),
+        );
+        await _captureWeb();
+      } else {
+        await candidate.startImageStream(_onImage);
+      }
     } on CameraException {
       phase = MonitorPhase.unavailable;
       errorKey = 'monitorCameraDenied';
@@ -162,6 +178,65 @@ class MonitoringController extends ChangeNotifier {
       if (candidate != null && candidate != camera) await candidate.dispose();
     } finally {
       _notify();
+    }
+  }
+
+  Future<void> _captureWeb() async {
+    final controller = camera;
+    final maximum = maxDimension;
+    if (_disposed ||
+        _capturingWeb ||
+        controller == null ||
+        maximum == null ||
+        _inflightSequence != null ||
+        _encoding) {
+      return;
+    }
+    _capturingWeb = true;
+    final generation = _cameraGeneration;
+    try {
+      final photo = await controller.takePicture();
+      final image = img.decodeImage(await photo.readAsBytes());
+      if (_disposed || generation != _cameraGeneration || image == null) return;
+      final size = uprightDimensions(image.width, image.height, 0, maximum);
+      final aspect = image.width / image.height;
+      final changed =
+          _sourceAspect != null && (_sourceAspect! - aspect).abs() > 0.01;
+      _sourceAspect = aspect;
+      if (changed) {
+        _invalidateCalibration();
+        if (running) await stop(reason: 'monitorRotationChanged');
+      }
+      frameWidth = size.width;
+      frameHeight = size.height;
+      _notify();
+      if (!running || _socket == null) return;
+      final resized = img.copyResize(
+        image,
+        width: size.width,
+        height: size.height,
+      );
+      _pending = RawCameraFrame(
+        width: resized.width,
+        height: resized.height,
+        planes: [
+          FramePlane(
+            bytes: resized.getBytes(order: img.ChannelOrder.bgra),
+            rowStride: resized.width * 4,
+            pixelStride: 4,
+          ),
+        ],
+        format: 'bgra8888',
+        rotation: 0,
+        maxDimension: maximum,
+        orientation: orientation,
+        capturedAtMs: DateTime.now().millisecondsSinceEpoch,
+      );
+      await _drain();
+    } catch (_) {
+      if (running) await stop(reason: 'monitorCameraFailed');
+    } finally {
+      _capturingWeb = false;
     }
   }
 
@@ -195,9 +270,10 @@ class MonitoringController extends ChangeNotifier {
       rotation,
       maxSize,
     );
-    final rawAspect = rotation % 180 == 0
-        ? image.width / image.height
-        : image.height / image.width;
+    final rawAspect =
+        rotation % 180 == 0
+            ? image.width / image.height
+            : image.height / image.width;
     final aspectChanged =
         _sourceAspect != null && (_sourceAspect! - rawAspect).abs() > 0.000001;
     _sourceAspect = rawAspect;
@@ -269,7 +345,7 @@ class MonitoringController extends ChangeNotifier {
       });
       _inflightSequence = sequence;
       transmittedBytes += utf8.encode(message).length;
-      socket.add(message);
+      socket.sink.add(message);
     } catch (_) {
       if (generation == _sessionGeneration) {
         await stop(reason: 'monitorFrameFailed');
@@ -420,7 +496,7 @@ class MonitoringController extends ChangeNotifier {
       sessionId = id;
       final socket = await app.api.openSocket('/monitoring/$id/stream');
       if (_disposed || generation != _sessionGeneration) {
-        await socket.close(WebSocketStatus.goingAway);
+        await socket.sink.close(1001);
         return;
       }
       _socket = socket;
@@ -435,7 +511,7 @@ class MonitoringController extends ChangeNotifier {
       _lastCapturedAtMs = 0;
       phase = MonitorPhase.waiting;
       final opened = DateTime.now();
-      _subscription = socket.listen(
+      _subscription = socket.stream.listen(
         (dynamic message) => _onMessage(message, generation),
         onDone: () {
           if (generation == _sessionGeneration) {
@@ -513,9 +589,13 @@ class MonitoringController extends ChangeNotifier {
     }
   }
 
-  static List<Map<String, dynamic>> _maps(dynamic value) => value is List
-      ? value.whereType<Map>().map((m) => Map<String, dynamic>.from(m)).toList()
-      : [];
+  static List<Map<String, dynamic>> _maps(dynamic value) =>
+      value is List
+          ? value
+              .whereType<Map>()
+              .map((m) => Map<String, dynamic>.from(m))
+              .toList()
+          : [];
 
   Future<void> stop({String? reason}) async {
     ++_sessionGeneration;
@@ -549,7 +629,7 @@ class MonitoringController extends ChangeNotifier {
     }
     await subscription?.cancel();
     try {
-      await socket?.close(WebSocketStatus.normalClosure).timeout(timeout);
+      await socket?.sink.close(1000).timeout(timeout);
     } catch (_) {}
     if (id != null) {
       try {
@@ -580,6 +660,8 @@ class MonitoringController extends ChangeNotifier {
   Future<void> suspend() async {
     if (_releasing) return;
     _releasing = true;
+    _webCaptureTimer?.cancel();
+    _webCaptureTimer = null;
     ++_cameraGeneration;
     _invalidateCalibration();
     _sourceAspect = null;

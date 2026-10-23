@@ -2,6 +2,7 @@
 .env.*
 !.env.example
 config/local.json
+config/web.json
 google-services.json
 firebase_options.dart
 *.jks

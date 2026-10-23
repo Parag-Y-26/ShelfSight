@@ -23,6 +23,10 @@ class PairInput(Input):
     device_name: Name
 
 
+class CloudSessionInput(Input):
+    device_name: Name
+
+
 class FloorInput(Input):
     name: Name
     width: Positive

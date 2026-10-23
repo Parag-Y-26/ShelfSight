@@ -1,10 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -14,6 +14,7 @@ import 'package:intl/intl.dart';
 import '../core/app_controller.dart';
 import '../core/strings.dart';
 import '../core/theme.dart';
+import '../core/temp_photo.dart';
 import '../widgets/shared.dart';
 
 class ProductScreen extends ConsumerStatefulWidget {
@@ -169,7 +170,7 @@ class _ProductScreenState extends ConsumerState<ProductScreen>
 
   Future<void> _discard(String path) async {
     try {
-      await File(path).delete();
+      await deleteTempPhoto(path);
     } catch (_) {
       /* App temporary capture may already be deleted. */
     }
@@ -252,7 +253,7 @@ class _ProductScreenState extends ConsumerState<ProductScreen>
         await _discard(photo.path);
         return;
       }
-      final file = File(photo.path);
+      final file = XFile(photo.path);
       final bytes = await file.readAsBytes();
       if (!mounted) {
         await _discard(photo.path);
@@ -281,6 +282,10 @@ class _ProductScreenState extends ConsumerState<ProductScreen>
       _cameraGeneration++;
       await camera.dispose();
       if (previous != null) await _discard(previous);
+      if (kIsWeb) {
+        setState(() => _statusKey = 'rsNoBarcode');
+        return;
+      }
       scanner = BarcodeScanner(
         formats: [
           BarcodeFormat.ean13,

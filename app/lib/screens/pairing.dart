@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
@@ -9,7 +8,48 @@ import 'package:google_mlkit_barcode_scanning/google_mlkit_barcode_scanning.dart
 import '../core/app_controller.dart';
 import '../core/strings.dart';
 import '../core/theme.dart';
+import '../core/temp_photo.dart';
 import '../widgets/shared.dart';
+
+class CloudConnectionScreen extends ConsumerWidget {
+  const CloudConnectionScreen({super.key});
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final app = ref.watch(appControllerProvider);
+    return PageScaffold(
+      title: 'Cloud connection',
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 440),
+          child: Padding(
+            padding: const EdgeInsets.all(Tokens.lg),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text('Connect to your ShelfSight workspace'),
+                const SizedBox(height: Tokens.md),
+                Text(
+                  app.error == null
+                      ? 'Sign in to connect securely.'
+                      : 'Connection failed. Check your connection and try again.',
+                ),
+                const SizedBox(height: Tokens.md),
+                FilledButton(
+                  onPressed: app.reconnectCloud,
+                  child: const Text('Retry connection'),
+                ),
+                TextButton(
+                  onPressed: app.logout,
+                  child: const Text('Sign out'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
 
 class PairingScreen extends ConsumerStatefulWidget {
   const PairingScreen({super.key});
@@ -35,8 +75,9 @@ class _PairingScreenState extends ConsumerState<PairingScreen> {
   }
 
   Future<void> _scan() async {
-    final data = await Navigator.of(context)
-        .push<String>(MaterialPageRoute(builder: (_) => const _PairQrCamera()));
+    final data = await Navigator.of(
+      context,
+    ).push<String>(MaterialPageRoute(builder: (_) => const _PairQrCamera()));
     if (!mounted || data == null) return;
     try {
       final value = jsonDecode(data);
@@ -91,9 +132,8 @@ class _PairingScreenState extends ConsumerState<PairingScreen> {
       IconButton(
         tooltip: tr(context, 'logout'),
         icon: const Icon(Icons.logout),
-        onPressed: _busy
-            ? null
-            : () => ref.read(appControllerProvider).logout(),
+        onPressed:
+            _busy ? null : () => ref.read(appControllerProvider).logout(),
       ),
     ],
     child: ListView(
@@ -154,9 +194,11 @@ class _PairingScreenState extends ConsumerState<PairingScreen> {
                       labelText: tr(context, field.$2),
                       prefixIcon: Icon(field.$3),
                     ),
-                    validator: (value) => value == null || value.trim().isEmpty
-                        ? tr(context, 'requiredField')
-                        : null,
+                    validator:
+                        (value) =>
+                            value == null || value.trim().isEmpty
+                                ? tr(context, 'requiredField')
+                                : null,
                   ),
                   const SizedBox(height: Tokens.md),
                 ],
@@ -248,10 +290,8 @@ class _PairQrCameraState extends State<_PairQrCamera>
       final values = await _scanner.processImage(
         InputImage.fromFilePath(file.path),
       );
-      final data = values
-          .map((b) => b.rawValue)
-          .whereType<String>()
-          .firstOrNull;
+      final data =
+          values.map((b) => b.rawValue).whereType<String>().firstOrNull;
       if (!mounted) return;
       if (data == null) {
         setState(() => _error = 'qrNotFound');
@@ -263,7 +303,7 @@ class _PairQrCameraState extends State<_PairQrCamera>
     } finally {
       if (file != null) {
         try {
-          await File(file.path).delete();
+          await deleteTempPhoto(file.path);
         } catch (_) {}
       }
       if (mounted) setState(() => _busy = false);
@@ -290,9 +330,10 @@ class _PairQrCameraState extends State<_PairQrCamera>
       children: [
         Expanded(
           child: Center(
-            child: _camera?.value.isInitialized == true
-                ? CameraPreview(_camera!)
-                : const CircularProgressIndicator(),
+            child:
+                _camera?.value.isInitialized == true
+                    ? CameraPreview(_camera!)
+                    : const CircularProgressIndicator(),
           ),
         ),
         if (_error != null) ErrorNotice(message: tr(context, _error!)),

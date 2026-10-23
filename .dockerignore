@@ -1,0 +1,17 @@
+*
+!Dockerfile
+!server/
+!server/pyproject.toml
+!server/uv.lock
+!server/shelfsight/
+!server/shelfsight/**
+!config/
+!config/defaults.json
+!app/
+!app/build/
+!app/build/web/
+!app/build/web/**
+!runtime/
+!runtime/models/
+!runtime/models/detector.tflite
+**/__pycache__/

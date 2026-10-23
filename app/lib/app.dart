@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -33,24 +34,30 @@ final _routerProvider = Provider<GoRouter>((ref) {
     },
     routes: [
       GoRoute(path: '/login', builder: (_, _) => const AuthScreen()),
-      GoRoute(path: '/pair', builder: (_, _) => const PairingScreen()),
+      GoRoute(
+        path: '/pair',
+        builder:
+            (_, _) =>
+                kIsWeb ? const CloudConnectionScreen() : const PairingScreen(),
+      ),
       GoRoute(path: '/home', builder: (_, _) => const DashboardScreen()),
       GoRoute(path: '/settings', builder: (_, _) => const SettingsScreen()),
       GoRoute(path: '/setup', builder: (_, _) => const StoreSetupScreen()),
       GoRoute(
         path: '/shelf/:id',
-        builder: (_, state) =>
-            ShelfResultsScreen(shelfId: state.pathParameters['id']!),
+        builder:
+            (_, state) =>
+                ShelfResultsScreen(shelfId: state.pathParameters['id']!),
       ),
       GoRoute(
         path: '/scan/:id',
-        builder: (_, state) =>
-            ShelfScanScreen(shelfId: state.pathParameters['id']!),
+        builder:
+            (_, state) => ShelfScanScreen(shelfId: state.pathParameters['id']!),
       ),
       GoRoute(
         path: '/product/:id',
-        builder: (_, state) =>
-            ProductScreen(shelfId: state.pathParameters['id']!),
+        builder:
+            (_, state) => ProductScreen(shelfId: state.pathParameters['id']!),
       ),
       GoRoute(path: '/map', builder: (_, _) => const StoreMapScreen()),
       GoRoute(path: '/monitor', builder: (_, _) => const MonitoringScreen()),
@@ -84,9 +91,13 @@ class ShelfSightApp extends ConsumerWidget {
         GlobalCupertinoLocalizations.delegate,
       ],
       routerConfig: ref.watch(_routerProvider),
-      builder: (context, child) => controller.initialized
-          ? child ?? const SizedBox.shrink()
-          : const Scaffold(body: Center(child: CircularProgressIndicator())),
+      builder:
+          (context, child) =>
+              controller.initialized
+                  ? child ?? const SizedBox.shrink()
+                  : const Scaffold(
+                    body: Center(child: CircularProgressIndicator()),
+                  ),
     );
   }
 }

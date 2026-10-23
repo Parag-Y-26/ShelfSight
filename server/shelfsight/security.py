@@ -105,12 +105,6 @@ class Sessions:
         return secret, expires
 
     def pair(self, secret: str, uid: str, device_name: str) -> dict:
-        token, expires = secrets.token_urlsafe(48), time.time() + self.session_ttl
-        data = {
-            "device_name": device_name,
-            "owner_uid": uid,
-            "expires_at": datetime.fromtimestamp(expires, UTC).isoformat().replace("+00:00", "Z"),
-        }
         with self.db.transaction():
             consumed = self.db.execute(
                 "UPDATE pairing SET consumed=1 WHERE secret_hash=? AND consumed=0 AND expires_at>?",
@@ -118,10 +112,21 @@ class Sessions:
             )
             if consumed.rowcount != 1:
                 raise HTTPException(403, "Pairing code is invalid, expired, or already used")
-            self.db.execute(
-                "INSERT INTO device_sessions VALUES (?,?,?,?)",
-                (token_hash(token), uid, expires, json.dumps(data)),
-            )
+            return self.issue_authenticated(uid, device_name)
+
+    def issue_authenticated(self, uid: str, device_name: str) -> dict:
+        """Caller must verify Firebase identity or consume a local pairing proof first."""
+        token, expires = secrets.token_urlsafe(48), time.time() + self.session_ttl
+        data = {
+            "device_name": device_name,
+            "owner_uid": uid,
+            "expires_at": datetime.fromtimestamp(expires, UTC).isoformat().replace("+00:00", "Z"),
+        }
+        self.db.execute("DELETE FROM device_sessions WHERE expires_at<=?", (time.time(),))
+        self.db.execute(
+            "INSERT INTO device_sessions VALUES (?,?,?,?)",
+            (token_hash(token), uid, expires, json.dumps(data)),
+        )
         return {**data, "session_token": token}
 
     def resolve(self, token: str) -> dict:

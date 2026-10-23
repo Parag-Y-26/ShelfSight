@@ -35,6 +35,8 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"  # noqa: S104 - explicit LAN server bind; pairing remains required.
     port: int = Field(default=8443, ge=1024, le=65535)
     public_address: str = ""
+    cloud_mode: bool = False
+    web_dir: Path = ROOT / "app" / "build" / "web"
     product_lookup_url: str = ""
     product_user_agent: str = "ShelfSight/0.1 (local retail research)"
     model_path: Path | None = Field(

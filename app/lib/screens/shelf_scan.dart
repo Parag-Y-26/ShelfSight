@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
@@ -9,6 +8,7 @@ import 'package:go_router/go_router.dart';
 import '../core/app_controller.dart';
 import '../core/strings.dart';
 import '../core/theme.dart';
+import '../core/temp_photo.dart';
 import '../widgets/shared.dart';
 import 'shelf_results.dart';
 
@@ -48,7 +48,7 @@ class _ShelfScanScreenState extends ConsumerState<ShelfScanScreen>
 
   Future<void> _discardPhoto(String path) async {
     try {
-      await File(path).delete();
+      await deleteTempPhoto(path);
     } catch (_) {
       /* Temporary image may already be removed. */
     }
@@ -303,7 +303,17 @@ class _ShelfScanScreenState extends ConsumerState<ShelfScanScreen>
                     fit: StackFit.expand,
                     children: [
                       if (_photo != null)
-                        Image.file(File(_photo!), fit: BoxFit.contain)
+                        FutureBuilder(
+                          future: XFile(_photo!).readAsBytes(),
+                          builder:
+                              (context, snapshot) =>
+                                  snapshot.hasData
+                                      ? Image.memory(
+                                        snapshot.data!,
+                                        fit: BoxFit.contain,
+                                      )
+                                      : const CircularProgressIndicator(),
+                        )
                       else if (camera != null && camera.value.isInitialized)
                         Center(
                           child: AspectRatio(

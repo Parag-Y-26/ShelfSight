@@ -1,5 +1,13 @@
 # ShelfSight
 
+## Flutter Web and Cloud Run
+
+The same Flutter app now builds for the browser. Build with `flutter build web --release --dart-define-from-file=../config/web.json` inside `app`, using a registered Firebase **web** app's client settings. The browser uses same-origin HTTPS, Firebase sign-in, tab-local caches, and one-use WebSocket tickets. Android keeps laptop pairing and certificate pinning.
+
+The root Dockerfile serves Flutter Web and the authenticated API together. Include `runtime/models/detector.tflite` in the build context and set `SHELFSIGHT_FIREBASE_PROJECT_ID`; supply Gemini credentials through Secret Manager. The entry point reads Cloud Run's `PORT`. Cloud Run requires a billing-enabled project. Run a single worker and a maximum of one instance because monitoring state and SQLite are local to the instance. **This cloud demo's records can reset when the instance restarts; durable multi-instance persistence is not implemented.** Browser camera monitoring uploads frames to the cloud server, so obtain consent before starting it. Barcode entry is manual in browsers; ML Kit barcode scanning remains Android-only.
+
+Validated locally: Flutter Web release compilation, 31 Flutter tests, 19 backend tests, and backend lint. Live cloud deployment and physical camera accuracy require separate verification.
+
 Flutter Android retail setup and local Python shelf monitoring. This is an original demo application, not a production deployment. Google technologies: Firebase Authentication, ML Kit barcodes, Gemini shelf identification and MediaPipe local person detection.
 
 ## Start
