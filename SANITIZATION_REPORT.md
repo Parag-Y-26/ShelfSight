@@ -60,3 +60,13 @@ Both working files and normalized staged blobs were read. Sorted path plus file 
 - Git index publication manifest SHA-256: `12811e9dab48b9ca1d6e58c4eb09f619fabb2a10247a8e68f3da4d385a7a5d60`.
 
 The Git index hash identifies the normalized publication snapshot before adding this report update. The two manifests differ only where line-ending normalization changes file bytes.
+
+## Follow-up Publication Audit — 2026-10-23
+
+Re-scanned all 106 current publication files, including this report: 89 text and 17 binary assets. All files were read; **Unreadable count: 0**. Zero secret, personal-data, internal-reference, dangerous-file, or tracked-ignored-file findings.
+
+Six pending Dart/test files were included. Existing commits `7c9e1e5` and `bf9ff3a` were scanned in full, including commit metadata: 212 historical file snapshots, zero findings. The original initial-commit identifier above predates its normalization amendment; `7c9e1e5` is the current initial root commit. The second commit is a subsequent public CI correction, not unsanitized imported history.
+
+Verdict remains **PASS WITH WARNINGS** solely for the five optional configuration aliases listed above.
+
+Normalized current source manifest SHA-256, excluding this self-referential report: `8a2581a06df79cc185e1aed445010c4dac9ddccc83d4604a7176ea78e36e417d`. Working text CRLF is normalized to LF for this digest; binary bytes are preserved.

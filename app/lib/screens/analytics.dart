@@ -10,7 +10,9 @@ import '../core/theme.dart';
 import '../widgets/shared.dart';
 
 class AnalyticsScreen extends ConsumerStatefulWidget {
-  const AnalyticsScreen({super.key});
+  const AnalyticsScreen({super.key, this.now = DateTime.now});
+
+  final DateTime Function() now;
 
   @override
   ConsumerState<AnalyticsScreen> createState() => _AnalyticsScreenState();
@@ -80,7 +82,7 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
     }
     final days = _number(period['days'])?.toInt();
     if (days == null || days <= 0) return false;
-    final now = DateTime.now();
+    final now = widget.now();
     _start = DateTime(now.year, now.month, now.day - days + 1).toUtc();
     _end = DateTime(now.year, now.month, now.day + 1).toUtc();
     return true;
@@ -91,7 +93,7 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
     final id = period['id']?.toString();
     if (id == null) return;
     if (period['days'] == null) {
-      final today = DateTime.now();
+      final today = widget.now();
       final last = DateTime(today.year, today.month, today.day);
       final previous = _customRange;
       final selected = await showDateRangePicker(
@@ -184,7 +186,7 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
         _fromCache = false;
         _updatedAt =
             DateTime.tryParse(valid['generated_at']?.toString() ?? '') ??
-            DateTime.now();
+            widget.now();
       });
     } catch (_) {
       if (mounted && generation == _generation) {

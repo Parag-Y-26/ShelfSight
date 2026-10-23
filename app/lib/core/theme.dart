@@ -6,6 +6,11 @@ abstract final class Tokens {
   static const teal = Color(0xFF00B5A6);
   static const pale = Color(0xFFF0F8FD);
   static const surface = Colors.white;
+  static const onAccent = Colors.white;
+  static const transparent = Colors.transparent;
+  static const scrim = Colors.black26;
+  static const logoLarge = 148.0;
+  static const logoSmall = 56.0;
   static const muted = Color(0xFF657387);
   static const line = Color(0xFFDCE7F0);
   static const warning = Color(0xFFE79517);

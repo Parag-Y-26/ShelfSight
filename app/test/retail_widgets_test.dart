@@ -54,6 +54,8 @@ const _item = <String, dynamic>{
 
 final _translations = <String, String>{};
 
+DateTime _fixedNow() => DateTime(2026, 10, 23, 15, 30);
+
 class _TestStringsDelegate extends LocalizationsDelegate<AppStrings> {
   const _TestStringsDelegate();
   @override
@@ -79,7 +81,7 @@ class _Api extends ApiClient {
     'total_dwell_seconds': 0,
     'shelves': <dynamic>[],
     'inventory': <dynamic>[],
-    'generated_at': '2026-10-23T10:00:00Z',
+    'generated_at': _fixedNow().toUtc().toIso8601String(),
   };
 
   @override
@@ -652,7 +654,7 @@ void main() {
       config: _config,
       store: _store,
     );
-    await _pump(tester, const AnalyticsScreen(), app);
+    await _pump(tester, const AnalyticsScreen(now: _fixedNow), app);
     expect(api.queries, hasLength(1));
     final start = DateTime.parse(api.queries.single['start'] as String);
     final end = DateTime.parse(api.queries.single['end'] as String);
@@ -660,6 +662,8 @@ void main() {
     expect(end.isUtc, isTrue);
     expect(start.toLocal().hour, 0);
     expect(end.toLocal().hour, 0);
+    expect(start.toLocal(), DateTime(2026, 10, 23));
+    expect(end.toLocal(), DateTime(2026, 10, 24));
     expect(find.text('Shelf visits'), findsOneWidget);
     expect(
       find.text(
@@ -744,7 +748,7 @@ void main() {
       config: _config,
       store: _store,
     );
-    await _pump(tester, const AnalyticsScreen(), app);
+    await _pump(tester, const AnalyticsScreen(now: _fixedNow), app);
     await expectLater(
       find.byType(MaterialApp),
       matchesGoldenFile('goldens/retail_analytics.png'),

@@ -19,21 +19,23 @@ class PageScaffold extends StatelessWidget {
     appBar: AppBar(
       title: Text(
         title,
-        style: Theme.of(context).textTheme.titleLarge
-            ?.copyWith(fontWeight: FontWeight.w800),
+        style: Theme.of(
+          context,
+        ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
       ),
       actions: actions,
     ),
     body: SafeArea(top: false, child: child),
-    bottomNavigationBar: bottom == null
-        ? null
-        : SafeArea(
-            top: false,
-            child: Padding(
-              padding: const EdgeInsets.all(Tokens.md),
-              child: bottom,
+    bottomNavigationBar:
+        bottom == null
+            ? null
+            : SafeArea(
+              top: false,
+              child: Padding(
+                padding: const EdgeInsets.all(Tokens.md),
+                child: bottom,
+              ),
             ),
-          ),
   );
 }
 
@@ -73,9 +75,9 @@ class BrandButton extends StatelessWidget {
       ),
       child: FilledButton(
         style: FilledButton.styleFrom(
-          backgroundColor: Colors.transparent,
-          shadowColor: Colors.transparent,
-          foregroundColor: Colors.white,
+          backgroundColor: Tokens.transparent,
+          shadowColor: Tokens.transparent,
+          foregroundColor: Tokens.onAccent,
         ),
         onPressed: onPressed,
         child: content,

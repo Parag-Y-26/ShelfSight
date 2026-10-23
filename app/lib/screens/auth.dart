@@ -47,15 +47,16 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
     } on FirebaseAuthException catch (e) {
       if (mounted) {
         setState(
-          () => _error = switch (e.code) {
-            'email-already-in-use' => 'emailInUse',
-            'weak-password' => 'weakPassword',
-            'invalid-email' => 'invalidEmail',
-            'network-request-failed' => 'connectionFailed',
-            'too-many-requests' => 'tryLater',
-            'operation-not-allowed' => 'providerDisabled',
-            _ => 'loginFailed',
-          },
+          () =>
+              _error = switch (e.code) {
+                'email-already-in-use' => 'emailInUse',
+                'weak-password' => 'weakPassword',
+                'invalid-email' => 'invalidEmail',
+                'network-request-failed' => 'connectionFailed',
+                'too-many-requests' => 'tryLater',
+                'operation-not-allowed' => 'providerDisabled',
+                _ => 'loginFailed',
+              },
         );
       }
     } catch (e) {
@@ -80,7 +81,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                 const SizedBox(height: Tokens.lg),
                 Image.asset(
                   'assets/logo.jpeg',
-                  height: 148,
+                  height: Tokens.logoLarge,
                   fit: BoxFit.contain,
                   semanticLabel: tr(context, 'brand'),
                 ),
@@ -88,14 +89,16 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                 Text(
                   tr(context, 'brand'),
                   textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.displaySmall
-                      ?.copyWith(fontWeight: FontWeight.w900),
+                  style: Theme.of(context).textTheme.displaySmall?.copyWith(
+                    fontWeight: FontWeight.w900,
+                  ),
                 ),
                 Text(
                   tr(context, 'tagline'),
                   textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.titleMedium
-                      ?.copyWith(color: Tokens.muted),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleMedium?.copyWith(color: Tokens.muted),
                 ),
                 const SizedBox(height: Tokens.xl),
                 if (!controller.firebaseConfigured)
@@ -164,9 +167,11 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                               labelText: tr(context, 'yourName'),
                               prefixIcon: const Icon(Icons.person_outline),
                             ),
-                            validator: (v) => v == null || v.trim().isEmpty
-                                ? tr(context, 'requiredField')
-                                : null,
+                            validator:
+                                (v) =>
+                                    v == null || v.trim().isEmpty
+                                        ? tr(context, 'requiredField')
+                                        : null,
                           ),
                           const SizedBox(height: Tokens.md),
                         ],
@@ -179,12 +184,14 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                             labelText: tr(context, 'email'),
                             prefixIcon: const Icon(Icons.mail_outline),
                           ),
-                          validator: (v) =>
-                              v == null ||
-                                  !RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$')
-                                      .hasMatch(v.trim())
-                              ? tr(context, 'invalidEmail')
-                              : null,
+                          validator:
+                              (v) =>
+                                  v == null ||
+                                          !RegExp(
+                                            r'^[^\s@]+@[^\s@]+\.[^\s@]+$',
+                                          ).hasMatch(v.trim())
+                                      ? tr(context, 'invalidEmail')
+                                      : null,
                         ),
                         const SizedBox(height: Tokens.md),
                         TextFormField(
@@ -204,9 +211,10 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                                 context,
                                 _showPassword ? 'hidePassword' : 'showPassword',
                               ),
-                              onPressed: () => setState(
-                                () => _showPassword = !_showPassword,
-                              ),
+                              onPressed:
+                                  () => setState(
+                                    () => _showPassword = !_showPassword,
+                                  ),
                               icon: Icon(
                                 _showPassword
                                     ? Icons.visibility_off_outlined
@@ -214,32 +222,35 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                               ),
                             ),
                           ),
-                          validator: (v) => v == null || v.isEmpty
-                              ? tr(context, 'requiredField')
-                              : _register && v.length < 6
-                              ? tr(context, 'weakPassword')
-                              : null,
+                          validator:
+                              (v) =>
+                                  v == null || v.isEmpty
+                                      ? tr(context, 'requiredField')
+                                      : _register && v.length < 6
+                                      ? tr(context, 'weakPassword')
+                                      : null,
                         ),
                         if (!_register)
                           Align(
                             alignment: Alignment.centerRight,
                             child: TextButton(
-                              onPressed: enabled
-                                  ? () {
-                                      if (_email.text.trim().isEmpty) {
-                                        setState(
-                                          () => _error = 'enterEmailFirst',
+                              onPressed:
+                                  enabled
+                                      ? () {
+                                        if (_email.text.trim().isEmpty) {
+                                          setState(
+                                            () => _error = 'enterEmailFirst',
+                                          );
+                                          return;
+                                        }
+                                        _action(
+                                          () => controller.resetPassword(
+                                            _email.text,
+                                          ),
+                                          reset: true,
                                         );
-                                        return;
                                       }
-                                      _action(
-                                        () => controller.resetPassword(
-                                          _email.text,
-                                        ),
-                                        reset: true,
-                                      );
-                                    }
-                                  : null,
+                                      : null,
                               child: Text(tr(context, 'forgotPassword')),
                             ),
                           ),
@@ -259,50 +270,56 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                             context,
                             _register ? 'createAccount' : 'login',
                           ),
-                          icon: _working
-                              ? Icons.hourglass_top
-                              : Icons.arrow_forward,
-                          onPressed: enabled
-                              ? () {
-                                  if (_form.currentState?.validate() != true) {
-                                    return;
+                          icon:
+                              _working
+                                  ? Icons.hourglass_top
+                                  : Icons.arrow_forward,
+                          onPressed:
+                              enabled
+                                  ? () {
+                                    if (_form.currentState?.validate() !=
+                                        true) {
+                                      return;
+                                    }
+                                    _action(
+                                      () =>
+                                          _register
+                                              ? controller.register(
+                                                _name.text,
+                                                _email.text,
+                                                _password.text,
+                                              )
+                                              : controller.login(
+                                                _email.text,
+                                                _password.text,
+                                              ),
+                                    );
                                   }
-                                  _action(
-                                    () => _register
-                                        ? controller.register(
-                                            _name.text,
-                                            _email.text,
-                                            _password.text,
-                                          )
-                                        : controller.login(
-                                            _email.text,
-                                            _password.text,
-                                          ),
-                                  );
-                                }
-                              : null,
+                                  : null,
                         ),
                         const SizedBox(height: Tokens.md),
                         BrandButton(
                           label: tr(context, 'continueGoogle'),
                           icon: Icons.account_circle_outlined,
                           outlined: true,
-                          onPressed: enabled
-                              ? () => _action(controller.googleLogin)
-                              : null,
+                          onPressed:
+                              enabled
+                                  ? () => _action(controller.googleLogin)
+                                  : null,
                         ),
                       ],
                     ),
                   ),
                 ),
                 TextButton(
-                  onPressed: _working
-                      ? null
-                      : () => setState(() {
-                          _register = !_register;
-                          _error = null;
-                          _notice = null;
-                        }),
+                  onPressed:
+                      _working
+                          ? null
+                          : () => setState(() {
+                            _register = !_register;
+                            _error = null;
+                            _notice = null;
+                          }),
                   child: Text(
                     tr(context, _register ? 'alreadyAccount' : 'newAccount'),
                   ),
@@ -310,8 +327,9 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                 Text(
                   tr(context, 'privacySummary'),
                   textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.bodySmall
-                      ?.copyWith(color: Tokens.muted),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodySmall?.copyWith(color: Tokens.muted),
                 ),
               ],
             ),

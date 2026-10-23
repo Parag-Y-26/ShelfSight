@@ -28,8 +28,8 @@ class DashboardScreen extends ConsumerWidget {
                 children: [
                   Image.asset(
                     'assets/logo.jpeg',
-                    width: 56,
-                    height: 56,
+                    width: Tokens.logoSmall,
+                    height: Tokens.logoSmall,
                     semanticLabel: tr(context, 'brand'),
                   ),
                   const SizedBox(width: Tokens.sm),
@@ -50,14 +50,16 @@ class DashboardScreen extends ConsumerWidget {
               const SizedBox(height: Tokens.xl),
               Text(
                 tr(context, 'greeting', {'name': controller.displayName}),
-                style: Theme.of(context).textTheme.headlineLarge
-                    ?.copyWith(fontWeight: FontWeight.w900),
+                style: Theme.of(context).textTheme.headlineLarge?.copyWith(
+                  fontWeight: FontWeight.w900,
+                ),
               ),
               const SizedBox(height: Tokens.sm),
               Text(
                 store?['name']?.toString() ?? tr(context, 'noStore'),
-                style: Theme.of(context).textTheme.headlineSmall
-                    ?.copyWith(color: Tokens.muted),
+                style: Theme.of(
+                  context,
+                ).textTheme.headlineSmall?.copyWith(color: Tokens.muted),
               ),
               const SizedBox(height: Tokens.lg),
               if (controller.isOffline)
@@ -157,12 +159,12 @@ class _DashboardCard extends StatelessWidget {
   final VoidCallback? onTap;
   @override
   Widget build(BuildContext context) {
-    final foreground = gradient ? Colors.white : Tokens.navy;
+    final foreground = gradient ? Tokens.onAccent : Tokens.navy;
     return Semantics(
       button: true,
       enabled: onTap != null,
       child: Material(
-        color: Colors.transparent,
+        color: Tokens.transparent,
         borderRadius: BorderRadius.circular(Tokens.radius),
         child: InkWell(
           onTap: onTap,
@@ -171,9 +173,10 @@ class _DashboardCard extends StatelessWidget {
             decoration: BoxDecoration(
               gradient: gradient ? Tokens.gradient : null,
               color: gradient ? null : Tokens.surface,
-              border: gradient
-                  ? null
-                  : Border.all(color: Tokens.teal.withValues(alpha: 0.5)),
+              border:
+                  gradient
+                      ? null
+                      : Border.all(color: Tokens.teal.withValues(alpha: 0.5)),
               borderRadius: BorderRadius.circular(Tokens.radius),
               boxShadow: const [Tokens.softShadow],
             ),
@@ -188,7 +191,7 @@ class _DashboardCard extends StatelessWidget {
                       Icon(
                         icon,
                         size: 94,
-                        color: gradient ? Colors.white : Tokens.teal,
+                        color: gradient ? Tokens.onAccent : Tokens.teal,
                       ),
                       if (live)
                         Container(
@@ -197,12 +200,12 @@ class _DashboardCard extends StatelessWidget {
                             vertical: Tokens.xs,
                           ),
                           decoration: BoxDecoration(
-                            color: Colors.black26,
+                            color: Tokens.scrim,
                             borderRadius: BorderRadius.circular(Tokens.md),
                           ),
                           child: Text(
                             tr(context, 'live'),
-                            style: const TextStyle(color: Colors.white),
+                            style: const TextStyle(color: Tokens.onAccent),
                           ),
                         ),
                     ],
@@ -222,8 +225,9 @@ class _DashboardCard extends StatelessWidget {
                       Expanded(
                         child: Text(
                           subtitle,
-                          style: Theme.of(context).textTheme.titleMedium
-                              ?.copyWith(color: foreground),
+                          style: Theme.of(
+                            context,
+                          ).textTheme.titleMedium?.copyWith(color: foreground),
                         ),
                       ),
                       Icon(
