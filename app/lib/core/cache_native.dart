@@ -19,12 +19,16 @@ class OwnerCache {
     final suffix = sha256.convert(utf8.encode('$uid|$server')).toString();
     final opened = await openDatabase(
       p.join(await getDatabasesPath(), 'cache_$suffix.db'),
-      version: 1,
+      version: 2,
       onCreate: (db, version) async {
         await db.execute(
           'CREATE TABLE cache (owner TEXT NOT NULL, key TEXT NOT NULL, '
           'value TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(owner,key))',
         );
+        await _createLedger(db);
+      },
+      onUpgrade: (db, oldVersion, newVersion) async {
+        if (oldVersion < 2) await _createLedger(db);
       },
     );
     if (generation != _generation) {
@@ -32,6 +36,62 @@ class OwnerCache {
       return;
     }
     _db = opened;
+  }
+
+  static Future<void> _createLedger(Database db) async {
+    await db.execute(
+      'CREATE TABLE ledger_events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, '
+      'owner TEXT NOT NULL, store_id TEXT NOT NULL, event_id TEXT NOT NULL, '
+      'data TEXT NOT NULL, UNIQUE(owner,store_id,event_id))',
+    );
+    await db.execute(
+      'CREATE TRIGGER ledger_events_immutable BEFORE UPDATE ON ledger_events '
+      "BEGIN SELECT RAISE(ABORT,'Ledger events are immutable'); END",
+    );
+  }
+
+  Future<void> recordEvents(
+    String storeId,
+    List<Map<String, dynamic>> events,
+  ) async {
+    final db = _db, uid = _uid;
+    if (db == null || uid == null) return;
+    await db.transaction((transaction) async {
+      for (final event in events) {
+        final id = event['id'];
+        if (id is! String ||
+            id.isEmpty ||
+            id.length > 128 ||
+            event['store_id'] != storeId) {
+          continue;
+        }
+        await transaction.insert('ledger_events', {
+          'owner': uid,
+          'store_id': storeId,
+          'event_id': id,
+          'data': jsonEncode(event),
+        }, conflictAlgorithm: ConflictAlgorithm.ignore);
+      }
+    });
+  }
+
+  Future<List<Map<String, dynamic>>> readEvents(
+    String storeId, {
+    int limit = 10000,
+  }) async {
+    if (limit <= 0) throw const FormatException('Invalid ledger limit');
+    final rows = await _db?.query(
+      'ledger_events',
+      columns: ['data'],
+      where: 'owner = ? AND store_id = ?',
+      whereArgs: [_uid, storeId],
+      orderBy: 'sequence DESC',
+      limit: limit,
+    );
+    return [
+      for (final row in (rows ?? []).reversed)
+        Map<String, dynamic>.from(jsonDecode(row['data'] as String) as Map),
+    ];
   }
 
   Future<void> put(String key, dynamic value) async {
@@ -60,6 +120,7 @@ class OwnerCache {
   Future<void> erase() async {
     if (_uid != null) {
       await _db?.delete('cache', where: 'owner = ?', whereArgs: [_uid]);
+      await _db?.delete('ledger_events', where: 'owner = ?', whereArgs: [_uid]);
     }
   }
 

@@ -36,7 +36,6 @@ jobs:
         run: |
           test -n "$SUPABASE_CONFIG" || { echo 'Configure SHELFSIGHT_SUPABASE_CONFIG before requesting an APK.'; exit 1; }
           printf '%s' "$SUPABASE_CONFIG" > config/local.json
-          cp config/defaults.json app/assets/defaults.json
       - name: Build Android ARM64 demo
         working-directory: app
         run: flutter build apk --debug --target-platform android-arm64 --split-per-abi --dart-define-from-file=../config/local.json

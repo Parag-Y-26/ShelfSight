@@ -1,11 +1,13 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../core/app_controller.dart';
 import '../core/strings.dart';
 import '../core/theme.dart';
 import '../widgets/shared.dart';
+import '../widgets/ai_keys_panel.dart';
 
 String authErrorKeyFor(String message) {
   final value = message.toLowerCase();
@@ -127,6 +129,15 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
     final enabled = controller.supabaseConfigured && !_working;
     final recovery = controller.passwordRecoveryPending;
     return Scaffold(
+      appBar: AppBar(
+        actions: [
+          IconButton(
+            tooltip: tr(context, 'settings'),
+            icon: const Icon(Icons.settings_outlined),
+            onPressed: () => context.push('/settings'),
+          ),
+        ],
+      ),
       body: SafeArea(
         child: Center(
           child: ConstrainedBox(
@@ -422,6 +433,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                             }),
                     child: Text(tr(context, 'alreadyAccount')),
                   ),
+                const AiKeysPanel(),
                 Text(
                   tr(context, 'privacySummary'),
                   textAlign: TextAlign.center,

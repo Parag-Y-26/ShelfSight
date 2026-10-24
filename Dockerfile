@@ -7,12 +7,10 @@ WORKDIR /workspace/server
 COPY server/pyproject.toml server/uv.lock ./
 COPY server/shelfsight ./shelfsight
 RUN uv sync --frozen --no-dev
-COPY config/defaults.json /workspace/config/defaults.json
-COPY runtime/models/detector.tflite /workspace/models/detector.tflite
+COPY app/assets/defaults.json /workspace/app/assets/defaults.json
 RUN useradd --create-home --uid 10001 shelfsight
 USER shelfsight
 ENV SHELFSIGHT_RUNTIME_DIR=/tmp/shelfsight \
-    SHELFSIGHT_MODEL_PATH=/workspace/models/detector.tflite \
     SHELFSIGHT_CLOUD_MODE=true \
     PYTHONUNBUFFERED=1
 EXPOSE 8080

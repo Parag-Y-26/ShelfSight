@@ -54,7 +54,7 @@ class ZoneTracker:
             return None
         duration = max(0, track.zone_last_seen - track.entered)
         result = None
-        if duration >= self._settings(track.shelf_id)["dwell_seconds"]:
+        if duration >= self._settings(track.shelf_id)["dwell_cutoff_sec"]:
             result = {
                 "track_id": track.id,
                 "shelf_id": track.shelf_id,
@@ -72,7 +72,8 @@ class ZoneTracker:
             if (
                 zone["x"] <= x <= zone["x"] + zone["width"]
                 and zone["y"] <= y <= zone["y"] + zone["height"]
-                and detection.confidence >= self._settings(zone["shelf_id"])["minimum_confidence"]
+                and detection.confidence
+                >= self._settings(zone["shelf_id"])["detection_confidence_threshold"]
             ):
                 return zone["shelf_id"]
         return None
@@ -81,7 +82,7 @@ class ZoneTracker:
         events = []
         # Expire tracks before association so long gaps cannot be bridged.
         for track_id, track in list(self.tracks.items()):
-            if now - track.last_seen > self._settings(track.shelf_id)["tracking_grace_seconds"]:
+            if now - track.last_seen > self._settings(track.shelf_id)["tracking_grace_sec"]:
                 event = self._end_visit(track, incomplete=True)
                 if event:
                     events.append(event)

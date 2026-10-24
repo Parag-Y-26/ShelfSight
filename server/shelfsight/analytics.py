@@ -63,6 +63,8 @@ def summarize(
     visits, dwell = 0, 0.0
     coverage, exposure, inventory = [], {}, {}
     for event in db.events(owner, store_id):
+        if event.get("provenance") == "labeled_replay":
+            continue
         kind = event["type"]
         if kind in {"visit", "coverage"}:
             event_a, event_b = (
@@ -105,7 +107,7 @@ def summarize(
             shelves[shelf_id]["exposure_seconds"] = union_duration(intervals)
     for item in inventory.values():
         item["low_stock_threshold"] = config.thresholds(store, shelf_objects.get(item["shelf_id"]))[
-            "low_stock"
+            "low_stock_threshold"
         ]
     return {
         "start": start,

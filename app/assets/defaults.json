@@ -1,16 +1,492 @@
 {
-  "revision": 1,
-  "locales": ["en_IN", "en_US", "en_GB"],
-  "strings": {"en": {}},
-  "modes": [{"id": "retail", "label_key": "retailMode"}],
-  "store_types": [{"id": "grocery", "label_key": "grocery"}, {"id": "clothing", "label_key": "clothing"}, {"id": "electronics", "label_key": "electronics"}, {"id": "pharmacy", "label_key": "pharmacy"}, {"id": "general", "label_key": "general"}, {"id": "other", "label_key": "other"}],
-  "goals": [{"id": "demand", "label_key": "trackDemand"}, {"id": "stockouts", "label_key": "reduceStockouts"}, {"id": "sales", "label_key": "improveSales"}],
-  "periods": [{"id": "today", "label_key": "today", "days": 1}, {"id": "week", "label_key": "sevenDays", "days": 7}, {"id": "month", "label_key": "thirtyDays", "days": 30}, {"id": "custom", "label_key": "custom", "days": null}],
-  "shapes": [{"id": "rectangle", "label_key": "rectangle"}, {"id": "square", "label_key": "square"}],
-  "units": ["m", "ft"],
-  "currencies": ["INR", "USD", "EUR", "GBP"],
+  "revision": 2,
+  "locales": [
+    "en_IN",
+    "en_US",
+    "en_GB"
+  ],
+  "strings": {
+    "en": {}
+  },
+  "modes": [
+    {
+      "id": "retail",
+      "label_key": "retailMode"
+    }
+  ],
+  "store_types": [
+    {
+      "id": "grocery",
+      "label_key": "grocery"
+    },
+    {
+      "id": "clothing",
+      "label_key": "clothing"
+    },
+    {
+      "id": "electronics",
+      "label_key": "electronics"
+    },
+    {
+      "id": "pharmacy",
+      "label_key": "pharmacy"
+    },
+    {
+      "id": "general",
+      "label_key": "general"
+    },
+    {
+      "id": "other",
+      "label_key": "other"
+    }
+  ],
+  "goals": [
+    {
+      "id": "demand",
+      "label_key": "trackDemand"
+    },
+    {
+      "id": "stockouts",
+      "label_key": "reduceStockouts"
+    },
+    {
+      "id": "sales",
+      "label_key": "improveSales"
+    }
+  ],
+  "periods": [
+    {
+      "id": "today",
+      "label_key": "today",
+      "days": 1
+    },
+    {
+      "id": "week",
+      "label_key": "sevenDays",
+      "days": 7
+    },
+    {
+      "id": "month",
+      "label_key": "thirtyDays",
+      "days": 30
+    },
+    {
+      "id": "custom",
+      "label_key": "custom",
+      "days": null
+    }
+  ],
+  "shapes": [
+    {
+      "id": "rectangle",
+      "label_key": "rectangle"
+    },
+    {
+      "id": "square",
+      "label_key": "square"
+    }
+  ],
+  "units": [
+    "m",
+    "ft"
+  ],
+  "currencies": [
+    "INR",
+    "USD",
+    "EUR",
+    "GBP"
+  ],
   "shelf_name_template": "Shelf {n}",
-  "thresholds": {"minimum_confidence": 0.5, "dwell_seconds": 2.0, "monitoring_interval_ms": 200, "tracking_grace_seconds": 1.0, "exit_grace_seconds": 1.0, "coverage_gap_seconds": 1.0, "low_stock": 5, "frame_max_dimension": 640, "tracker_match_distance": 0.18, "tracker_min_iou": 0.05},
-  "limits": {"max_image_bytes": 5242880, "max_image_pixels": 16000000, "pairing_ttl_seconds": 300, "session_ttl_seconds": 28800, "max_frame_age_seconds": 5, "scan_timeout_seconds": 25, "aspect_ratio_tolerance": 0.01},
-  "capabilities": {"retail": true, "visits": true, "dwell": true, "barcode": true, "pickup": false, "putback": false, "touch": false, "sales": false, "restaurant": false, "biometric": false, "decision_engine": false}
+  "limits": {
+    "max_image_bytes": 5242880,
+    "max_image_pixels": 16000000,
+    "pairing_ttl_seconds": 300,
+    "session_ttl_seconds": 28800,
+    "max_frame_age_seconds": 5,
+    "scan_timeout_seconds": 25,
+    "aspect_ratio_tolerance": 0.01
+  },
+  "capabilities": {
+    "retail": true,
+    "visits": true,
+    "dwell": true,
+    "barcode": true,
+    "pickup": false,
+    "putback": false,
+    "touch": false,
+    "sales": false,
+    "restaurant": false,
+    "biometric": false,
+    "decision_engine": true
+  },
+  "schema_version": 2,
+  "settings": {
+    "detection_confidence_threshold": 0.45,
+    "dwell_cutoff_sec": 3.0,
+    "monitoring_sample_fps": 5,
+    "tracking_grace_sec": 1.5,
+    "low_stock_threshold": 5,
+    "execution_mode": "remote_server",
+    "active_ai_provider": "auto",
+    "exit_grace_seconds": 1.0,
+    "coverage_gap_seconds": 1.0,
+    "frame_max_dimension": 640,
+    "tracker_match_distance": 0.18,
+    "tracker_min_iou": 0.05,
+    "decision_min_visits": 5,
+    "decision_min_coverage_sec": 60,
+    "decision_probability_threshold": 0.8
+  },
+  "platform_defaults": {
+    "android": {
+      "execution_mode": "standalone_mobile"
+    },
+    "ios": {
+      "execution_mode": "standalone_mobile"
+    }
+  },
+  "setting_rules": {
+    "detection_confidence_threshold": {
+      "type": "number",
+      "min": 0,
+      "max": 1
+    },
+    "dwell_cutoff_sec": {
+      "type": "number",
+      "min": 0
+    },
+    "monitoring_sample_fps": {
+      "type": "number",
+      "exclusive_min": 0,
+      "max": 60
+    },
+    "tracking_grace_sec": {
+      "type": "number",
+      "min": 0
+    },
+    "low_stock_threshold": {
+      "type": "integer",
+      "min": 0
+    },
+    "execution_mode": {
+      "type": "string",
+      "enum": [
+        "standalone_mobile",
+        "remote_server"
+      ]
+    },
+    "active_ai_provider": {
+      "type": "string",
+      "enum": [
+        "auto",
+        "gemini",
+        "nvidia_nim",
+        "openrouter"
+      ]
+    },
+    "exit_grace_seconds": {
+      "type": "number",
+      "min": 0
+    },
+    "coverage_gap_seconds": {
+      "type": "number",
+      "min": 0
+    },
+    "frame_max_dimension": {
+      "type": "integer",
+      "exclusive_min": 0,
+      "max": 4000
+    },
+    "tracker_match_distance": {
+      "type": "number",
+      "min": 0,
+      "max": 1
+    },
+    "tracker_min_iou": {
+      "type": "number",
+      "min": 0,
+      "max": 1
+    },
+    "decision_min_visits": {
+      "type": "integer",
+      "min": 1
+    },
+    "decision_min_coverage_sec": {
+      "type": "number",
+      "exclusive_min": 0
+    },
+    "decision_probability_threshold": {
+      "type": "number",
+      "min": 0,
+      "max": 1
+    }
+  },
+  "legacy_settings": {
+    "minimum_confidence": {
+      "key": "detection_confidence_threshold"
+    },
+    "dwell_seconds": {
+      "key": "dwell_cutoff_sec"
+    },
+    "tracking_grace_seconds": {
+      "key": "tracking_grace_sec"
+    },
+    "low_stock": {
+      "key": "low_stock_threshold"
+    },
+    "monitoring_interval_ms": {
+      "key": "monitoring_sample_fps",
+      "reciprocal_scale": 1000
+    }
+  },
+  "ai": {
+    "providers": {
+      "gemini": {
+        "endpoint": "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+        "vision_model": "gemini-2.5-flash",
+        "decision_model": "gemini-2.5-flash",
+        "fallback_models": []
+      },
+      "nvidia_nim": {
+        "endpoint": "https://integrate.api.nvidia.com/v1/chat/completions",
+        "vision_model": "meta/llama-4-maverick-17b-128e-instruct",
+        "decision_model": "meta/llama-4-maverick-17b-128e-instruct",
+        "model_options": [
+          "meta/llama-4-maverick-17b-128e-instruct",
+          "nvidia/nemotron-3.5-super-vl-120b-a12b",
+          "google/gemma-3-27b-it"
+        ],
+        "fallback_models": []
+      },
+      "openrouter": {
+        "endpoint": "https://openrouter.ai/api/v1/chat/completions",
+        "vision_model": "google/gemini-2.5-flash",
+        "decision_model": "google/gemini-2.5-flash",
+        "fallback_models": [
+          "meta-llama/llama-4-maverick",
+          "qwen/qwen2.5-vl-72b-instruct"
+        ],
+        "headers": {
+          "HTTP-Referer": "https://shelfsight.app",
+          "X-Title": "ShelfSight"
+        }
+      }
+    },
+    "schemas": {
+      "shelf_scan": {
+        "type": "object",
+        "properties": {
+          "candidates": {
+            "type": "array",
+            "maxItems": 250,
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "brand": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "maxLength": 300
+                },
+                "category": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "maxLength": 500
+                },
+                "barcode": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "maxLength": 2048
+                },
+                "bbox": {
+                  "type": "array",
+                  "items": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "minItems": 4,
+                  "maxItems": 4
+                }
+              },
+              "required": [
+                "name",
+                "brand",
+                "category",
+                "barcode",
+                "bbox"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "candidates"
+        ],
+        "additionalProperties": false
+      },
+      "product_parse": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 200
+          },
+          "brand": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 300
+          },
+          "barcode": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 2048
+          },
+          "category": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 500
+          },
+          "net_weight": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 100
+          }
+        },
+        "required": [
+          "name",
+          "brand",
+          "barcode",
+          "category",
+          "net_weight"
+        ],
+        "additionalProperties": false
+      },
+      "autonomous_decision": {
+        "type": "object",
+        "properties": {
+          "actions": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "RESTOCK_ALERT",
+                    "PLANOGRAM_SWAP",
+                    "CALIBRATION_CHECK"
+                  ]
+                },
+                "shelf_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "event_ids": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 100,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              },
+              "required": [
+                "type",
+                "shelf_id",
+                "event_ids"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "disclaimer": {
+            "type": "string",
+            "enum": [
+              "Pickup, put-back, and sales conversion are not measured in this build; decisions are grounded strictly in verified dwell, visit, and recorded stock ledger events."
+            ]
+          },
+          "requires_review": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          }
+        },
+        "required": [
+          "actions",
+          "disclaimer",
+          "requires_review"
+        ],
+        "additionalProperties": false
+      },
+      "connection_test": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          }
+        },
+        "required": [
+          "ok"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "limits": {
+      "timeout_seconds": 25,
+      "max_response_bytes": 1000000,
+      "max_output_tokens": 4096,
+      "history_samples": 20,
+      "history_ttl_seconds": 300,
+      "max_prompt_chars": 100000,
+      "max_decision_events": 10000,
+      "attempt_timeout_seconds": 25,
+      "laya_timeout_seconds": 2,
+      "laya_cooldown_seconds": 30,
+      "max_decision_shelves": 20
+    },
+    "disclaimer": "Pickup, put-back, and sales conversion are not measured in this build; decisions are grounded strictly in verified dwell, visit, and recorded stock ledger events.",
+    "evidence_provenance": [
+      "user_input",
+      "local_camera_observation",
+      "recovered_local_camera_observation",
+      "remote_camera_observation"
+    ],
+    "decision_policy": {
+      "evidence_max_age_seconds": 86400,
+      "max_actions": 20,
+      "max_event_ids": 100,
+      "reasons": {
+        "RESTOCK_ALERT": "Recorded stock is at or below the configured low-stock threshold. Verify the count before restocking.",
+        "PLANOGRAM_SWAP": "Verified visits and coverage meet the configured evidence minimum, while median dwell is below the configured cutoff. Review shelf placement.",
+        "CALIBRATION_CHECK": "Incomplete camera observations are recorded. Check calibration and camera coverage."
+      }
+    }
+  }
 }

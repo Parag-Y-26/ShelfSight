@@ -4,8 +4,11 @@ import 'package:go_router/go_router.dart';
 
 import '../core/app_controller.dart';
 import '../core/strings.dart';
+import '../core/configuration.dart';
+import '../widgets/evaluation_replay.dart';
 import '../core/theme.dart';
 import '../widgets/shared.dart';
+import '../widgets/ai_keys_panel.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -31,53 +34,30 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     }
   }
 
+  bool _global = true;
+
+  Map<String, dynamic> _overrides(AppController app) =>
+      _global ? app.deviceOverrides : app.settingsOverrides(shelfId: _shelfId);
+
+  Future<void> _save(Map<String, dynamic> values) => _run(
+    () => ref
+        .read(appControllerProvider)
+        .saveSettings(values, global: _global, shelfId: _shelfId),
+  );
+
   Future<void> _threshold(String key, num inherited, dynamic current) async {
+    final app = ref.read(appControllerProvider);
     final value = await showDialog<num>(
       context: context,
       builder:
-          (_) => _ThresholdDialog(settingKey: key, value: current ?? inherited),
+          (_) => _ThresholdDialog(
+            settingKey: key,
+            value: current ?? inherited,
+            configuration: app.runtimeConfiguration,
+          ),
     );
     if (value == null || !mounted) return;
-    final c = ref.read(appControllerProvider);
-    final target =
-        _shelfId == null
-            ? c.store
-            : c.shelves.where((s) => s['id'] == _shelfId).firstOrNull;
-    final settings = Map<String, dynamic>.from(
-      target?['settings'] is Map ? target!['settings'] as Map : {},
-    );
-    settings[key] = value;
-    await _run(() async {
-      await c.api.patch(
-        _shelfId == null ? '/stores/${c.store!['id']}' : '/shelves/$_shelfId',
-        {'settings': settings},
-      );
-      await c.refresh();
-    });
-  }
-
-  Future<void> _resetOverrides() async {
-    final c = ref.read(appControllerProvider);
-    final target =
-        _shelfId == null
-            ? c.store
-            : c.shelves.where((s) => s['id'] == _shelfId).firstOrNull;
-    final settings = Map<String, dynamic>.from(
-      target?['settings'] is Map ? target!['settings'] as Map : {},
-    );
-    final defaults = c.config['thresholds'];
-    if (defaults is Map) {
-      for (final key in defaults.keys) {
-        settings.remove(key);
-      }
-    }
-    await _run(() async {
-      await c.api.patch(
-        _shelfId == null ? '/stores/${c.store!['id']}' : '/shelves/$_shelfId',
-        {'settings': settings},
-      );
-      await c.refresh();
-    });
+    await _save({..._overrides(app), key: value});
   }
 
   Future<void> _delete() async {
@@ -112,13 +92,18 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     final c = ref.watch(appControllerProvider);
-    final defaults =
-        c.config['thresholds'] is Map ? c.config['thresholds'] as Map : {};
-    final storeSettings =
-        c.store?['settings'] is Map ? c.store!['settings'] as Map : {};
-    final shelf = c.shelves.where((s) => s['id'] == _shelfId).firstOrNull;
-    final shelfSettings =
-        shelf?['settings'] is Map ? shelf!['settings'] as Map : {};
+    final global = _global || c.store == null;
+    final defaults = c.globalSettings;
+    final current = _overrides(c);
+    final inherited =
+        global
+            ? c.runtimeConfiguration.resolve()
+            : c.runtimeConfiguration.resolve(
+              device: c.deviceOverrides,
+              store:
+                  _shelfId == null ? null : {'settings': c.settingsOverrides()},
+            );
+    final rules = c.config['setting_rules'] as Map? ?? {};
     final providers =
         c.config['providers'] is Map ? c.config['providers'] as Map : {};
     final currencies =
@@ -131,6 +116,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         children: [
           if (_busy) const LinearProgressIndicator(),
           if (_error != null) ErrorNotice(message: tr(context, _error!)),
+          if (c.settingsSyncPending) Text(tr(context, 'settingsSavedLocally')),
           InfoCard(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -175,6 +161,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               child: Column(
                 children: [
                   DropdownButtonFormField<String>(
+                    isExpanded: true,
                     initialValue: c.store?['id']?.toString(),
                     decoration: InputDecoration(
                       labelText: tr(context, 'activeStore'),
@@ -219,6 +206,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   ),
                   const SizedBox(height: Tokens.md),
                   DropdownButtonFormField<String>(
+                    isExpanded: true,
                     key: ValueKey(c.effectiveLocaleTag),
                     initialValue: c.effectiveLocaleTag,
                     decoration: InputDecoration(
@@ -246,6 +234,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     ('unit', units),
                   ]) ...[
                     DropdownButtonFormField<String>(
+                      isExpanded: true,
                       initialValue:
                           field.$2.contains(c.store?[field.$1])
                               ? c.store![field.$1].toString()
@@ -282,86 +271,132 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 ],
               ),
             ),
-            InfoCard(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    tr(context, 'thresholds'),
-                    style: Theme.of(context).textTheme.titleLarge,
+          ],
+          InfoCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  tr(context, 'thresholds'),
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+                const SizedBox(height: Tokens.sm),
+                Text(tr(context, 'overridePrecedence')),
+                const SizedBox(height: Tokens.md),
+                DropdownButtonFormField<String>(
+                  isExpanded: true,
+                  key: ValueKey('${c.store?['id']}|$_global|$_shelfId'),
+                  initialValue: global ? 'global' : _shelfId ?? 'store',
+                  decoration: InputDecoration(
+                    labelText: tr(context, 'applyTo'),
                   ),
-                  const SizedBox(height: Tokens.sm),
-                  Text(tr(context, 'overridePrecedence')),
-                  const SizedBox(height: Tokens.md),
-                  DropdownButtonFormField<String>(
-                    initialValue: _shelfId ?? '',
-                    decoration: InputDecoration(
-                      labelText: tr(context, 'applyTo'),
+                  items: [
+                    DropdownMenuItem(
+                      value: 'global',
+                      child: Text(tr(context, 'deviceDefaults')),
                     ),
-                    items: [
+                    if (c.store != null)
                       DropdownMenuItem(
-                        value: '',
+                        value: 'store',
                         child: Text(tr(context, 'entireStore')),
                       ),
+                    if (c.store != null)
                       ...c.shelves.map(
                         (s) => DropdownMenuItem(
                           value: s['id'].toString(),
                           child: Text(s['name']?.toString() ?? ''),
                         ),
                       ),
-                    ],
-                    onChanged:
-                        _busy
-                            ? null
-                            : (id) =>
-                                setState(() => _shelfId = id == '' ? null : id),
-                  ),
-                  const SizedBox(height: Tokens.sm),
-                  for (final entry in defaults.entries)
-                    if (entry.value is num)
-                      Builder(
-                        builder: (context) {
-                          final key = entry.key.toString();
-                          final inherited =
-                              storeSettings[key] is num
-                                  ? storeSettings[key] as num
-                                  : entry.value as num;
-                          final current =
-                              _shelfId == null
-                                  ? storeSettings[key]
-                                  : shelfSettings[key];
-                          return ListTile(
-                            contentPadding: EdgeInsets.zero,
-                            title: Text(tr(context, 'threshold_$key')),
-                            subtitle: Text(
-                              tr(
-                                context,
-                                current == null
-                                    ? 'inheritedValue'
-                                    : 'overrideValue',
-                                {'value': (current ?? inherited).toString()},
-                              ),
-                            ),
-                            trailing: const Icon(Icons.edit_outlined),
-                            onTap:
-                                _busy
-                                    ? null
-                                    : () => _threshold(key, inherited, current),
-                          );
-                        },
+                  ],
+                  onChanged:
+                      _busy
+                          ? null
+                          : (id) => setState(() {
+                            _global = id == 'global';
+                            _shelfId =
+                                id == 'global' || id == 'store' ? null : id;
+                          }),
+                ),
+                for (final entry in defaults.entries)
+                  if (rules[entry.key] is Map && entry.value is num)
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(tr(context, 'threshold_${entry.key}')),
+                      subtitle: Text(
+                        tr(
+                          context,
+                          current.containsKey(entry.key)
+                              ? 'overrideValue'
+                              : 'inheritedValue',
+                          {
+                            'value':
+                                (current[entry.key] ?? inherited[entry.key])
+                                    .toString(),
+                          },
+                        ),
                       ),
-                  TextButton(
-                    onPressed: _busy ? null : _resetOverrides,
-                    child: Text(tr(context, 'resetOverrides')),
-                  ),
-                  Text(
-                    tr(context, 'unsupportedSettings'),
-                    style: const TextStyle(color: Tokens.muted),
-                  ),
-                ],
-              ),
+                      trailing: const Icon(Icons.edit_outlined),
+                      onTap:
+                          _busy || c.monitoringActive
+                              ? null
+                              : () => _threshold(
+                                entry.key,
+                                inherited[entry.key] as num,
+                                current[entry.key],
+                              ),
+                    )
+                  else if (rules[entry.key] is Map &&
+                      (rules[entry.key] as Map)['enum'] is List)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: Tokens.sm),
+                      child: DropdownButtonFormField<String>(
+                        isExpanded: true,
+                        key: ValueKey(
+                          '${c.store?['id']}|$_global|$_shelfId|${entry.key}|${current[entry.key]}',
+                        ),
+                        initialValue:
+                            (current[entry.key] ?? inherited[entry.key])
+                                .toString(),
+                        decoration: InputDecoration(
+                          labelText: tr(context, 'threshold_${entry.key}'),
+                        ),
+                        items:
+                            ((rules[entry.key] as Map)['enum'] as List)
+                                .map(
+                                  (v) => DropdownMenuItem(
+                                    value: v.toString(),
+                                    child: Text(tr(context, 'option_$v')),
+                                  ),
+                                )
+                                .toList(),
+                        onChanged:
+                            _busy || c.monitoringActive
+                                ? null
+                                : (value) {
+                                  if (value != null) {
+                                    _save({...current, entry.key: value});
+                                  }
+                                },
+                      ),
+                    ),
+                TextButton(
+                  onPressed:
+                      _busy || c.monitoringActive ? null : () => _save({}),
+                  child: Text(tr(context, 'resetOverrides')),
+                ),
+                if (c.effectiveSettings()['execution_mode'] ==
+                    'standalone_mobile')
+                  Text(tr(context, 'standaloneUnavailable')),
+                if (c.monitoringActive)
+                  Text(tr(context, 'settingsAfterMonitoring')),
+                Text(
+                  tr(context, 'unsupportedSettings'),
+                  style: const TextStyle(color: Tokens.muted),
+                ),
+              ],
             ),
-          ],
+          ),
+          const EvaluationReplayCard(),
           InfoCard(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -394,10 +429,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   ),
                 if (providers.isEmpty)
                   Text(tr(context, 'providerDetailsUnavailable')),
-                Text(tr(context, 'decisionDisabled')),
+                Text(tr(context, 'decisionGrounded')),
               ],
             ),
           ),
+          const AiKeysPanel(showRouting: false),
           InfoCard(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -430,7 +466,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 }
 
 class _ThresholdDialog extends StatefulWidget {
-  const _ThresholdDialog({required this.settingKey, required this.value});
+  const _ThresholdDialog({
+    required this.settingKey,
+    required this.value,
+    required this.configuration,
+  });
+  final RuntimeConfiguration configuration;
   final String settingKey;
   final num value;
   @override
@@ -457,22 +498,10 @@ class _ThresholdDialogState extends State<_ThresholdDialog> {
         decoration: InputDecoration(labelText: tr(context, 'settingValue')),
         validator: (value) {
           final number = num.tryParse(value ?? '');
-          final key = widget.settingKey;
-          if (number == null ||
-              !number.isFinite ||
-              number < 0 ||
-              (key == 'minimum_confidence' && number > 1) ||
-              ([
-                    'monitoring_interval_ms',
-                    'frame_max_dimension',
-                  ].contains(key) &&
-                  number <= 0) ||
-              ([
-                    'low_stock',
-                    'frame_max_dimension',
-                    'monitoring_interval_ms',
-                  ].contains(key) &&
-                  number % 1 != 0)) {
+          try {
+            if (number == null) throw const FormatException();
+            widget.configuration.validate({widget.settingKey: number});
+          } on FormatException {
             return tr(context, 'invalidSetting');
           }
           return null;

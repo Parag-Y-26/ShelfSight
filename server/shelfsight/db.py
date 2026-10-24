@@ -124,7 +124,15 @@ class Database:
         )
         return event
 
-    def events(self, owner: str, store_id: str) -> list[dict]:
+    def events(self, owner: str, store_id: str, *, limit: int | None = None) -> list[dict]:
+        if limit is not None:
+            if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
+                raise ValueError("Event limit must be a positive integer")
+            rows = self.execute(
+                "SELECT data FROM events WHERE owner=? AND store_id=? ORDER BY rowid DESC LIMIT ?",
+                (owner, store_id, limit),
+            ).fetchall()
+            return [json.loads(row["data"]) for row in reversed(rows)]
         return [
             json.loads(row["data"])
             for row in self.execute(

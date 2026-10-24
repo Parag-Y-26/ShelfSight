@@ -20,6 +20,7 @@ import 'package:shelfsight/screens/product.dart';
 import 'package:shelfsight/screens/shelf_results.dart';
 import 'package:shelfsight/screens/store_setup.dart';
 import 'package:shelfsight/widgets/shared.dart';
+import 'runtime_settings_test.dart' show MemorySettings;
 
 const _config = <String, dynamic>{
   'store_types': [
@@ -675,23 +676,55 @@ void main() {
     expect(start.toLocal(), DateTime(2026, 10, 23));
     expect(end.toLocal(), DateTime(2026, 10, 24));
     expect(find.text('Shelf visits'), findsOneWidget);
-    expect(
-      find.text(
-        'No visits yet. Start monitoring and allow a qualifying stay in a calibrated shelf zone.',
-      ),
-      findsOneWidget,
-    );
+    expect(find.text('No recorded events yet'), findsOneWidget);
     await tester.scrollUntilVisible(
       find.text('Estimated items sold and sales value'),
       300,
       scrollable: _vertical,
     );
-    expect(find.text('Not measured in this build.'), findsWidgets);
+    expect(find.text('Not measured in this build'), findsWidgets);
     expect(find.textContaining('₹'), findsNothing);
     expect(find.textContaining('+9%'), findsNothing);
     await tester.tap(find.byTooltip('Copy CSV export'));
     await tester.pumpAndSettle();
     expect(api.exports, ['/stores/owned-store/analytics/export']);
+  });
+
+  testWidgets('local low-stock settings drive analytics classification', (
+    tester,
+  ) async {
+    final api = _Api();
+    api.analytics['inventory'] = [
+      {
+        'item_id': 'local-item',
+        'shelf_id': _shelf['id'],
+        'product_id': 'p',
+        'name': 'User-counted test inventory',
+        'quantity': 6,
+        'price_minor': null,
+        'last_corrected_at': _fixedNow().toUtc().toIso8601String(),
+        'low_stock_threshold': 5,
+      },
+    ];
+    final config = Map<String, dynamic>.from(
+      jsonDecode(File('assets/defaults.json').readAsStringSync()) as Map,
+    );
+    final app = AppController.forTesting(
+      api: api,
+      config: config,
+      settingsStore: MemorySettings(),
+      store: _store,
+      shelves: [_shelf],
+    );
+    await app.saveSettings({'low_stock_threshold': 10}, global: true);
+    await _pump(tester, AnalyticsScreen(now: _fixedNow), app);
+    await tester.scrollUntilVisible(
+      find.text('Running low'),
+      250,
+      scrollable: _vertical,
+    );
+    expect(find.text('Running low'), findsOneWidget);
+    expect(find.text('User-counted test inventory'), findsWidgets);
   });
 
   testWidgets('setup reference frame uses blank user input fields', (

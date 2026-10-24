@@ -17,6 +17,8 @@ import 'screens/product.dart';
 import 'screens/analytics.dart';
 import 'screens/store_map.dart';
 import 'screens/monitoring.dart';
+import 'screens/ai_results.dart';
+import 'screens/recommendations.dart';
 
 final _routerProvider = Provider<GoRouter>((ref) {
   final controller = ref.read(appControllerProvider);
@@ -26,6 +28,7 @@ final _routerProvider = Provider<GoRouter>((ref) {
     redirect: (context, state) {
       if (!controller.initialized) return null;
       final path = state.matchedLocation;
+      if (['/settings', '/ai-scan', '/ai-parse'].contains(path)) return null;
       if (!controller.authenticated) return path == '/login' ? null : '/login';
       if (!controller.paired) return path == '/connect' ? null : '/connect';
       if (path == '/login' || path == '/connect') return '/home';
@@ -33,6 +36,18 @@ final _routerProvider = Provider<GoRouter>((ref) {
     },
     routes: [
       GoRoute(path: '/login', builder: (_, _) => const AuthScreen()),
+      GoRoute(
+        path: '/ai-scan',
+        builder: (_, _) => const ShelfScanScreen(direct: true),
+      ),
+      GoRoute(
+        path: '/ai-parse',
+        builder: (_, _) => const AiProductParseScreen(),
+      ),
+      GoRoute(
+        path: '/recommendations',
+        builder: (_, _) => const RecommendationsScreen(),
+      ),
       GoRoute(
         path: '/connect',
         builder: (_, _) => const CloudConnectionScreen(),

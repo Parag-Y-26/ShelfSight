@@ -12,6 +12,7 @@ ID = Annotated[str, Field(min_length=1, max_length=128)]
 Positive = Annotated[float, Field(gt=0, le=1_000_000)]
 Orientation = Literal["portraitUp", "landscapeLeft", "portraitDown", "landscapeRight"]
 SettingNumber = Annotated[int, Field(strict=True)] | Annotated[float, Field(strict=True)]
+SettingValue = SettingNumber | Annotated[str, Field(strict=True, max_length=100)]
 
 
 class Input(BaseModel):
@@ -63,7 +64,7 @@ class StorePatch(Input):
     name: Name | None = None
     currency: Annotated[str, Field(min_length=3, max_length=3)] | None = None
     unit: Annotated[str, Field(max_length=16)] | None = None
-    settings: dict[str, SettingNumber] | None = None
+    settings: dict[str, SettingValue] | None = None
 
 
 class ShelfInput(Input):
@@ -81,7 +82,7 @@ class ShelfPatch(Input):
     length: Positive | None = None
     rotation: Literal[0, 90, 180, 270] | None = None
     rows: Annotated[int, Field(strict=True, ge=1, le=1000)] | None = None
-    settings: dict[str, SettingNumber] | None = None
+    settings: dict[str, SettingValue] | None = None
 
 
 class ProductInput(Input):
@@ -157,6 +158,9 @@ class CalibrationInput(Input):
 
 class MonitoringInput(Input):
     calibration_id: ID
+    settings: dict[str, SettingValue] = Field(default_factory=dict)
+    store_settings: dict[str, SettingValue] | None = None
+    shelf_settings: dict[str, dict[str, SettingValue]] = Field(default_factory=dict)
 
 
 class FrameInput(Input):

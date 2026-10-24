@@ -6,8 +6,8 @@ from shelfsight.tracking import ZoneTracker
 
 
 def tracker(**overrides):
-    thresholds = BusinessConfig(ROOT / "config/defaults.json").data["thresholds"]
-    thresholds.update(overrides)
+    thresholds = BusinessConfig(ROOT / "app/assets/defaults.json").data["settings"]
+    thresholds.update(BusinessConfig(ROOT / "app/assets/defaults.json").validate_overrides(overrides))
     return ZoneTracker(
         [{"shelf_id": "alpha", "x": 0, "y": 0, "width": 0.5, "height": 1}], thresholds, {}
     )

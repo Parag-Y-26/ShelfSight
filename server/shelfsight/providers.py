@@ -10,6 +10,7 @@ import math
 import struct
 import threading
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Protocol
 from urllib.parse import urlsplit
 
@@ -52,15 +53,125 @@ class ProductRepository(Protocol):
 class DecisionEngine(Protocol):
     available: bool
 
-    def decide(self, task: str, text: str, choices: list[str]) -> dict | None: ...
+    def decide(
+        self, db: Database, owner: str, store_id: str, *, device_defaults: dict | None = None
+    ) -> dict: ...
 
 
 class DisabledDecisionEngine:
+    """Legacy opt-out adapter; the application uses AutonomousDecisionEngine."""
+
     available = False
     reason = "Decision engine is disabled; all core functions work without it"
 
     def decide(self, task: str, text: str, choices: list[str]) -> None:
         return None
+
+
+class AutonomousDecisionEngine:
+    """Read-only recommendations; evidence gates precede every generative call."""
+
+    available = True
+    reason = "Ledger-grounded typed decisions; every recommendation requires review"
+
+    def __init__(self, laya, router):
+        self.laya, self.router = laya, router
+
+    def decide(
+        self, db: Database, owner: str, store_id: str, *, device_defaults: dict | None = None
+    ) -> dict:
+        config = self.laya.config
+        store = db.get("store", store_id, owner)
+        shelves = db.list("shelf", owner, store_id)
+        scope_limited = len(shelves) > config.data["ai"]["limits"]["max_decision_shelves"]
+        shelves = shelves[: config.data["ai"]["limits"]["max_decision_shelves"]]
+        items = db.list("item", owner, store_id)
+        shelves = [
+            {
+                **shelf,
+                "known_item_ids": [item["id"] for item in items if item["shelf_id"] == shelf["id"]],
+            }
+            for shelf in shelves
+        ]
+        events = db.events(owner, store_id, limit=config.data["ai"]["limits"]["max_decision_events"])
+        now = datetime.now(UTC)
+        assessments = [
+            self.laya.assess(events, shelf, store, now=now, device_defaults=device_defaults)
+            for shelf in shelves
+        ]
+        return {**self.from_assessments(assessments), "scope_limited": scope_limited}
+
+    def from_assessments(self, assessments: list[dict]) -> dict:
+        ai = self.laya.config.data["ai"]
+        eligible = {}
+        for assessment in assessments:
+            for name, result in assessment["noul"].items():
+                if (
+                    result["p_true"] is not None
+                    and result.get("eligible", False)
+                    and result["p_true"] > 0
+                    and result["p_true"] >= assessment["probability_threshold"]
+                    and result["event_ids"]
+                ):
+                    action = {
+                        "type": name.upper(),
+                        "shelf_id": assessment["shelf_id"],
+                        "event_ids": result["event_ids"],
+                    }
+                    eligible[(name.upper(), assessment["shelf_id"])] = action
+        actions = list(eligible.values())[: ai["decision_policy"]["max_actions"]]
+        plan = {"actions": actions, "disclaimer": ai["disclaimer"], "requires_review": True}
+        source = "deterministic_policy"
+
+        def validate_plan(candidate):
+            if len(candidate["actions"]) > ai["decision_policy"]["max_actions"]:
+                raise ValueError("Recommendation exceeds the configured action limit")
+            seen = set()
+            for action in candidate["actions"]:
+                key = (action["type"], action["shelf_id"])
+                expected = eligible.get(key)
+                if (
+                    key in seen
+                    or expected is None
+                    or set(action["event_ids"]) != set(expected["event_ids"])
+                    or len(action["event_ids"]) != len(set(action["event_ids"]))
+                ):
+                    raise ValueError("Recommendation cites unsupported ledger evidence")
+                seen.add(key)
+
+        if actions and self.router.available:
+            from .vision_compatible import AiRoutingError
+
+            try:
+                result = self.router.generate(
+                    "autonomous_decision",
+                    json.dumps(
+                        {
+                            "instructions": (
+                                "Select useful recommendations only from eligible_actions. "
+                                "Copy exact shelf_id, event_ids and disclaimer. "
+                                "Do not infer pickup, put-back or sales."
+                            ),
+                            "eligible_actions": actions,
+                            "verified_telemetry": {
+                                value["shelf_id"]: value["telemetry"] for value in assessments
+                            },
+                            "urgency": {value["shelf_id"]: value["score"] for value in assessments},
+                            "disclaimer": ai["disclaimer"],
+                        }
+                    ),
+                    validate=validate_plan,
+                )
+                plan, source = result["data"], result["provider"]
+            except (AiRoutingError, ValueError):
+                pass
+        return {
+            **plan,
+            "source": source,
+            "assessments": assessments,
+            "calibration_status": "not_empirically_validated",
+            "generated_at": utc_now(),
+        }
 
 
 def image_dimensions(data: bytes) -> tuple[int, int]:

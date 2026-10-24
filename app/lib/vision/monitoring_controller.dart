@@ -9,6 +9,7 @@ import 'package:image/image.dart' as img;
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../core/app_controller.dart';
+import '../core/configuration.dart';
 import 'frame_encoder.dart';
 import 'geometry.dart';
 
@@ -72,8 +73,20 @@ class MonitoringController extends ChangeNotifier {
 
   Map<String, dynamic> get config => _config.isEmpty ? app.config : _config;
 
-  double? _value(String key, [Map<String, dynamic>? shelf]) =>
-      threshold(config, app.store, shelf, key);
+  double? _value(String key, [Map<String, dynamic>? shelf]) => finiteNumber(
+    RuntimeConfiguration(config).resolve(
+      device: app.deviceOverrides,
+      store: app.store == null ? null : {'settings': app.settingsOverrides()},
+      shelf:
+          shelf == null
+              ? null
+              : {
+                'settings': app.settingsOverrides(
+                  shelfId: shelf['id'].toString(),
+                ),
+              },
+    )[key],
+  );
 
   int? get maxDimension {
     final values =
@@ -98,13 +111,13 @@ class MonitoringController extends ChangeNotifier {
               (zone) =>
                   app.shelves.where((s) => s['id'] == zone.shelfId).firstOrNull,
             )
-            .map((shelf) => _value('monitoring_interval_ms', shelf))
+            .map((shelf) => _value('monitoring_sample_fps', shelf))
             .whereType<double>()
             .where((v) => v > 0)
             .toList();
-    if (values.isNotEmpty) return values.reduce(math.min).ceil();
-    final v = _value('monitoring_interval_ms');
-    return v != null && v > 0 ? v.ceil() : null;
+    if (values.isNotEmpty) return (1000 / values.reduce(math.max)).ceil();
+    final v = _value('monitoring_sample_fps');
+    return v != null && v > 0 ? (1000 / v).ceil() : null;
   }
 
   int? get _ackLimitMs {
@@ -160,11 +173,8 @@ class MonitoringController extends ChangeNotifier {
       candidate.addListener(_cameraValueChanged);
       phase = MonitorPhase.calibrating;
       if (kIsWeb) {
-        _webCaptureTimer = Timer.periodic(
-          const Duration(milliseconds: 1000),
-          (_) => unawaited(_captureWeb()),
-        );
         await _captureWeb();
+        _scheduleWebCapture();
       } else {
         await candidate.startImageStream(_onImage);
       }
@@ -179,6 +189,16 @@ class MonitoringController extends ChangeNotifier {
     } finally {
       _notify();
     }
+  }
+
+  void _scheduleWebCapture() {
+    _webCaptureTimer?.cancel();
+    final interval = intervalMs;
+    if (_disposed || _releasing || camera == null || interval == null) return;
+    _webCaptureTimer = Timer(Duration(milliseconds: interval), () async {
+      await _captureWeb();
+      _scheduleWebCapture();
+    });
   }
 
   Future<void> _captureWeb() async {
@@ -450,6 +470,11 @@ class MonitoringController extends ChangeNotifier {
 
   Future<void> start() async {
     if (!canStart) return;
+    if (!app.canUseRemoteMonitoring(zones.map((zone) => zone.shelfId))) {
+      errorKey = 'standaloneUnavailable';
+      _notify();
+      return;
+    }
     final storeId = app.store?['id'];
     if (storeId == null) return;
     final savedCalibration = calibrationId;
@@ -479,6 +504,7 @@ class MonitoringController extends ChangeNotifier {
       }
       final data = await app.api.post('/stores/$storeId/monitoring', {
         'calibration_id': savedCalibration,
+        ...app.monitoringSettings,
       });
       if (data is! Map || data['id'] is! String) throw const FormatException();
       final id = data['id'] as String;
@@ -575,6 +601,12 @@ class MonitoringController extends ChangeNotifier {
       tracks = _maps(data['tracks']);
       activeVisits = _maps(data['active_visits']);
       final received = _maps(data['events']);
+      final storeId = app.store?['id']?.toString();
+      if (storeId != null) {
+        unawaited(
+          app.cache.recordEvents(storeId, received).catchError((Object _) {}),
+        );
+      }
       final ids = events.map((e) => e['id']).toSet();
       events = [
         ...received.where((e) => e['id'] is String && ids.add(e['id'])),

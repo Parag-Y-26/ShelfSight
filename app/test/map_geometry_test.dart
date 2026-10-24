@@ -97,18 +97,18 @@ void main() {
     'threshold values resolve shelf then store then versioned configuration',
     () {
       final config = {
-        'thresholds': {'dwell_seconds': 2.5},
+        'settings': {'dwell_cutoff_sec': 2.5},
       };
       final store = {
-        'settings': {'dwell_seconds': 3.5},
+        'settings': {'dwell_cutoff_sec': 3.5},
       };
       final shelf = {
-        'settings': {'dwell_seconds': 4.5},
+        'settings': {'dwell_cutoff_sec': 4.5},
       };
-      expect(threshold(config, store, shelf, 'dwell_seconds'), 4.5);
-      expect(threshold(config, store, null, 'dwell_seconds'), 3.5);
-      expect(threshold(config, null, null, 'dwell_seconds'), 2.5);
-      expect(threshold({}, null, null, 'dwell_seconds'), isNull);
+      expect(threshold(config, store, shelf, 'dwell_cutoff_sec'), 4.5);
+      expect(threshold(config, store, null, 'dwell_cutoff_sec'), 3.5);
+      expect(threshold(config, null, null, 'dwell_cutoff_sec'), 2.5);
+      expect(threshold({}, null, null, 'dwell_cutoff_sec'), isNull);
     },
   );
 

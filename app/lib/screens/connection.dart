@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../core/api_client.dart';
 import '../core/app_controller.dart';
@@ -101,6 +102,11 @@ class _CloudConnectionScreenState extends ConsumerState<CloudConnectionScreen> {
     return PageScaffold(
       title: tr(context, 'apiConnection'),
       actions: [
+        IconButton(
+          tooltip: tr(context, 'settings'),
+          icon: const Icon(Icons.settings_outlined),
+          onPressed: _busy ? null : () => context.push('/settings'),
+        ),
         IconButton(
           tooltip: tr(context, 'logout'),
           icon: const Icon(Icons.logout),

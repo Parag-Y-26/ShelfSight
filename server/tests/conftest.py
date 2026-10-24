@@ -37,7 +37,7 @@ def environment(tmp_path):
     db = Database(tmp_path / "test.sqlite3")
     settings = Settings(
         runtime_dir=tmp_path,
-        config_path=ROOT / "config" / "defaults.json",
+        config_path=ROOT / "app" / "assets" / "defaults.json",
         supabase_url="https://test.supabase.co",
         supabase_publishable_key="sb_publishable_test",
         _env_file=None,

@@ -311,7 +311,16 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
     );
     final maxVisits =
         ranking.isEmpty ? 0 : _number(ranking.first['visits']) ?? 0;
-    final inventory = _maps(data?['inventory']);
+    final inventory =
+        _maps(data?['inventory']).map((item) {
+          final shelf =
+              app.shelves.where((s) => s['id'] == item['shelf_id']).firstOrNull;
+          final threshold = app.effectiveSettings(shelf)['low_stock_threshold'];
+          return {
+            ...item,
+            if (threshold is num) 'low_stock_threshold': threshold,
+          };
+        }).toList();
     final lowInventory =
         inventory.where((e) {
           final quantity = _number(e['quantity']);

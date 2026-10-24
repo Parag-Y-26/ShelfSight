@@ -10,6 +10,11 @@ import 'package:google_sign_in/google_sign_in.dart';
 
 import 'api_client.dart';
 import 'cache.dart';
+import 'configuration.dart';
+import 'ai_credentials.dart';
+import 'ai_provider_router.dart';
+import 'autonomous_decision_engine.dart';
+import 'laya_decision_service.dart';
 import 'strings.dart';
 export 'api_client.dart' show ApiClient, ApiFailure, friendlyError;
 
@@ -18,10 +23,20 @@ final appControllerProvider = ChangeNotifierProvider<AppController>(
 );
 
 class AppController extends ChangeNotifier {
-  AppController({ApiClient? api, OwnerCache? cache, SupabaseClient? auth})
-    : api = api ?? ApiClient(),
-      cache = cache ?? OwnerCache(),
-      _auth = auth {
+  AppController({
+    ApiClient? api,
+    OwnerCache? cache,
+    SupabaseClient? auth,
+    DeviceSettingsStore? settingsStore,
+    AiCredentials? aiCredentials,
+    AiProviderRouter? aiRouter,
+  }) : api = api ?? ApiClient(),
+       cache = cache ?? OwnerCache(),
+       settingsStore = settingsStore ?? DeviceSettingsStore(),
+       aiCredentials = aiCredentials ?? AiCredentials(),
+       _aiRouter = aiRouter,
+       _injectedAiRouter = aiRouter != null,
+       _auth = auth {
     this.api.onUnauthorized = _sessionExpired;
     unawaited(_bootstrap());
   }
@@ -29,6 +44,9 @@ class AppController extends ChangeNotifier {
   AppController.forTesting({
     required this.api,
     OwnerCache? cache,
+    DeviceSettingsStore? settingsStore,
+    AiCredentials? aiCredentials,
+    AiProviderRouter? aiRouter,
     this.config = const {},
     this.store,
     this.stores = const [],
@@ -40,6 +58,10 @@ class AppController extends ChangeNotifier {
     bool signedIn = true,
     this.supabaseConfigured = false,
   }) : cache = cache ?? OwnerCache(),
+       settingsStore = settingsStore ?? DeviceSettingsStore(),
+       aiCredentials = aiCredentials ?? AiCredentials(),
+       _aiRouter = aiRouter,
+       _injectedAiRouter = aiRouter != null,
        _authenticated = signedIn,
        initialized = true {
     AppStrings.setResourceOverlay(config['strings']);
@@ -47,6 +69,169 @@ class AppController extends ChangeNotifier {
 
   final ApiClient api;
   final OwnerCache cache;
+  final DeviceSettingsStore settingsStore;
+  final AiCredentials aiCredentials;
+  AiProviderRouter? _aiRouter;
+  final bool _injectedAiRouter;
+  AiProviderRouter get aiRouter =>
+      _aiRouter ??= AiProviderRouter(config, credentials: aiCredentials);
+
+  Future<AutonomousActionPlan> recommendations() async {
+    final generation = _generation;
+    final selected = store;
+    if (selected == null) throw const ApiFailure('invalidInput');
+    final id = selected['id'].toString();
+    if (paired && !isOffline) {
+      try {
+        final response = await api.get('/stores/$id/events');
+        if (!_current(generation) || store?['id'] != id) {
+          throw const ApiFailure('sessionExpired');
+        }
+        await cache.recordEvents(
+          id,
+          _list(response is Map ? response['items'] : null),
+        );
+      } catch (_) {
+        if (!_current(generation)) rethrow;
+      }
+    }
+    final events = await cache.readEvents(
+      id,
+      limit: (config['ai']['limits']['max_decision_events'] as num).toInt(),
+    );
+    if (!_current(generation) || store?['id'] != id) {
+      throw const ApiFailure('sessionExpired');
+    }
+    final engine = AutonomousDecisionEngine(
+      LayaDecisionService(config),
+      aiRouter,
+    );
+    final plan = await engine.decide(
+      events,
+      shelves
+          .map(
+            (shelf) => {
+              ...shelf,
+              'known_item_ids':
+                  items
+                      .where((item) => item['shelf_id'] == shelf['id'])
+                      .map((item) => item['id'].toString())
+                      .toList(),
+              'settings': settingsOverrides(shelfId: shelf['id'].toString()),
+            },
+          )
+          .toList(),
+      store: {...selected, 'settings': settingsOverrides()},
+      deviceDefaults: deviceOverrides,
+      preferred: effectiveSettings()['active_ai_provider'].toString(),
+    );
+    if (!_current(generation) || store?['id'] != id) {
+      throw const ApiFailure('sessionExpired');
+    }
+    return plan;
+  }
+
+  bool settingsSyncPending = false;
+  Map<String, dynamic> _preferences = {};
+  RuntimeConfiguration get runtimeConfiguration => RuntimeConfiguration(config);
+  Map<String, dynamic> get deviceOverrides =>
+      Map<String, dynamic>.from(_preferences['global'] as Map? ?? {});
+  Map<String, dynamic> get globalSettings =>
+      runtimeConfiguration.resolve(device: deviceOverrides);
+  String _scopeKey(String id, {String? shelfId}) =>
+      jsonEncode([_identityUid, api.serverIdentity, id, shelfId]);
+  Map<String, dynamic> settingsOverrides({String? shelfId}) {
+    if (store == null) return deviceOverrides;
+    final target =
+        shelfId == null
+            ? store
+            : shelves.where((s) => s['id'] == shelfId).firstOrNull;
+    final saved =
+        (_preferences['scopes'] as Map?)?[_scopeKey(
+          store!['id'].toString(),
+          shelfId: shelfId,
+        )];
+    return runtimeConfiguration.normalize(
+      Map<String, dynamic>.from(
+        saved is Map ? saved : target?['settings'] as Map? ?? {},
+      ),
+    );
+  }
+
+  Map<String, dynamic> effectiveSettings([
+    Map<String, dynamic>? shelf,
+  ]) => runtimeConfiguration.resolve(
+    device: deviceOverrides,
+    store: store == null ? null : {'settings': settingsOverrides()},
+    shelf:
+        shelf == null
+            ? null
+            : {'settings': settingsOverrides(shelfId: shelf['id'].toString())},
+  );
+
+  bool canUseRemoteMonitoring(Iterable<String> shelfIds) =>
+      shelfIds.every((id) {
+        final shelf = shelves.where((s) => s['id'] == id).firstOrNull;
+        return shelf != null &&
+            effectiveSettings(shelf)['execution_mode'] == 'remote_server';
+      });
+
+  Future<void> restoreSettings() async {
+    final values = await settingsStore.read();
+    runtimeConfiguration.validate(
+      Map<String, dynamic>.from(values['global'] as Map? ?? {}),
+    );
+    _preferences = values;
+    notifyListeners();
+  }
+
+  Future<void> saveSettings(
+    Map<String, dynamic> values, {
+    bool global = false,
+    String? shelfId,
+  }) async {
+    final validated = runtimeConfiguration.validate(values);
+    final generation = _generation;
+    final selectedId = store?['id']?.toString();
+    final next = Map<String, dynamic>.from(_preferences);
+    if (global || selectedId == null) {
+      next['global'] = validated;
+    } else {
+      final scopes = Map<String, dynamic>.from(next['scopes'] as Map? ?? {});
+      scopes[_scopeKey(selectedId, shelfId: shelfId)] = validated;
+      next['scopes'] = scopes;
+    }
+    await settingsStore.write(next);
+    if (!_current(generation)) return;
+    _preferences = next;
+    settingsSyncPending = !global && selectedId != null;
+    notifyListeners();
+    if (!global && selectedId != null && paired && !isOffline) {
+      try {
+        await api.patch(
+          shelfId == null ? '/stores/$selectedId' : '/shelves/$shelfId',
+          {'settings': validated},
+        );
+        if (!_current(generation)) return;
+        settingsSyncPending = false;
+      } catch (_) {
+        // Locally saved overrides travel with subsequent monitoring requests.
+        // The Settings screen explains that server synchronization is pending.
+      }
+      if (_current(generation)) notifyListeners();
+    }
+  }
+
+  Map<String, dynamic> get monitoringSettings => {
+    'settings': globalSettings,
+    'store_settings': store == null ? <String, dynamic>{} : settingsOverrides(),
+    'shelf_settings': {
+      for (final shelf in shelves)
+        shelf['id'].toString(): settingsOverrides(
+          shelfId: shelf['id'].toString(),
+        ),
+    },
+  };
   SupabaseClient? _auth;
   StreamSubscription<AuthState>? _authSubscription;
   Future<void>? _googleInitialization;
@@ -97,7 +282,22 @@ class AppController extends ChangeNotifier {
   }
 
   void _setConfig(Map<String, dynamic> value) {
-    config = value;
+    if (!_injectedAiRouter) {
+      _aiRouter?.dispose();
+      _aiRouter = null;
+    }
+    config = {
+      ..._defaultConfig,
+      ...value,
+      for (final key in [
+        'settings',
+        'setting_rules',
+        'legacy_settings',
+        'platform_defaults',
+      ])
+        if (!value.containsKey(key) && _defaultConfig.containsKey(key))
+          key: _defaultConfig[key],
+    };
     AppStrings.setResourceOverlay(config['strings']);
   }
 
@@ -128,6 +328,7 @@ class AppController extends ChangeNotifier {
         jsonDecode(await rootBundle.loadString('assets/defaults.json')) as Map,
       );
       _setConfig(Map<String, dynamic>.from(_defaultConfig));
+      await restoreSettings();
       const supabaseUrl = String.fromEnvironment('SUPABASE_URL');
       const publishableKey = String.fromEnvironment('SUPABASE_PUBLISHABLE_KEY');
       supabaseConfigured = supabaseUrl.isNotEmpty && publishableKey.isNotEmpty;
@@ -262,6 +463,10 @@ class AppController extends ChangeNotifier {
 
   Future<void> reconnectCloud({String? address}) async {
     if (address != null) await api.setApiAddress(address);
+    await saveSettings({
+      ...deviceOverrides,
+      'execution_mode': 'remote_server',
+    }, global: true);
     await _userChanged(_auth?.auth.currentUser);
   }
 
@@ -286,6 +491,10 @@ class AppController extends ChangeNotifier {
       deviceName: deviceName,
     );
     if (!_current(generation)) return;
+    await saveSettings({
+      ...deviceOverrides,
+      'execution_mode': 'remote_server',
+    }, global: true);
     await _userChanged(user);
   }
 
@@ -486,6 +695,7 @@ class AppController extends ChangeNotifier {
   @override
   void dispose() {
     ++_generation;
+    _aiRouter?.dispose();
     _expiryTimer?.cancel();
     _authSubscription?.cancel();
     unawaited(cache.close());

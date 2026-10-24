@@ -43,7 +43,6 @@ if ($FlutterHome) { $flutterCommand = Join-Path $FlutterHome 'bin/flutter.bat' }
 elseif (Test-Path (Join-Path $env:USERPROFILE 'tools/flutter_shelfsight/bin/flutter.bat')) {
     $flutterCommand = Join-Path $env:USERPROFILE 'tools/flutter_shelfsight/bin/flutter.bat'
 }
-Copy-Item -LiteralPath (Join-Path $projectRoot 'config/defaults.json') -Destination (Join-Path $projectRoot 'app/assets/defaults.json')
 Push-Location (Join-Path $projectRoot 'app')
 try {
     & $flutterCommand pub get

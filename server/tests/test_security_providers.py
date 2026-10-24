@@ -71,7 +71,7 @@ def test_supabase_verifier_fails_closed_on_auth_service_unavailability(monkeypat
 
 
 def test_image_size_and_encoded_validation():
-    config = BusinessConfig(ROOT / "config/defaults.json")
+    config = BusinessConfig(ROOT / "app/assets/defaults.json")
     # Header is enough to reject a decompression bomb before image decoding.
     bomb = b"\x89PNG\r\n\x1a\n" + b"\x00" * 8 + struct.pack(">II", 50000, 50000)
     with pytest.raises(HTTPException) as failure:
@@ -87,7 +87,7 @@ def test_providers_fail_closed_without_configuration(tmp_path):
     settings = Settings(
         runtime_dir=tmp_path, model_path=None, gemini_api_key="", gemini_model="", _env_file=None
     )
-    config = BusinessConfig(ROOT / "config/defaults.json")
+    config = BusinessConfig(ROOT / "app/assets/defaults.json")
     assert MediaPipeDetector(settings).available is False
     assert GeminiVisionModel(settings, config).available is False
     assert DisabledDecisionEngine().decide("anything", "text", []) is None

@@ -202,7 +202,7 @@ double? threshold(
   Map<String, dynamic>? shelf,
   String key,
 ) {
-  final defaults = config['thresholds'];
+  final defaults = config['settings'];
   final storeSettings = store?['settings'];
   final shelfSettings = shelf?['settings'];
   return finiteNumber(

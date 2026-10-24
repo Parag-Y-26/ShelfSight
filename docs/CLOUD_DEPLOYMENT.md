@@ -22,7 +22,7 @@ For another provider, select `openai-compatible` and configure `SHELFSIGHT_VISIO
 
 ## Optional Cloud Run demo
 
-Google Cloud Run is an optional hosting route, not a prerequisite for the local setup. The root Dockerfile builds only the API. It needs a verified MediaPipe person model at `runtime/models/detector.tflite`, the Supabase URL and publishable key, and billing enabled on the Google Cloud project. The deployment script checks billing, deploys the API, verifies `/health`, and confirms unauthenticated store requests receive 401. From PowerShell in the repository root:
+Google Cloud Run is an optional hosting route, not a prerequisite for the local setup. The root Dockerfile builds only the API and canonical configuration. Model binaries, databases and credentials are excluded from Docker and Cloud Build uploads. Without an externally provisioned verified model, person detection remains unavailable. For monitoring, provision the model independently on the host and set `SHELFSIGHT_MODEL_PATH` to that runtime path; the source deployment helper does not provision it. The API needs the Supabase URL and publishable key, and billing enabled on the Google Cloud project. The deployment script checks billing, deploys the API, verifies `/health`, and confirms unauthenticated store requests receive 401. From PowerShell in the repository root:
 
 ```powershell
 ./scripts/Deploy-CloudRun.ps1 -ProjectId 'your-cloud-project-id'

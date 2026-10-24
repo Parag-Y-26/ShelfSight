@@ -15,7 +15,7 @@ def cloud_environment(tmp_path):
         Settings(
             cloud_mode=True,
             runtime_dir=tmp_path,
-            config_path=ROOT / "config/defaults.json",
+            config_path=ROOT / "app/assets/defaults.json",
             _env_file=None,
         ),
         verifier=TestVerifier(),
@@ -82,7 +82,7 @@ def test_cloud_login_is_disabled_locally(environment):
 
 def test_cloud_configuration_is_truthful_and_does_not_mutate_defaults(cloud_environment):
     client, app, login = cloud_environment
-    defaults = BusinessConfig(ROOT / "config/defaults.json").public()
+    defaults = BusinessConfig(ROOT / "app/assets/defaults.json").public()
     headers = login()
     response = client.get("/v1/config", headers=headers)
     assert response.status_code == 200
@@ -165,7 +165,7 @@ def test_cloud_login_and_static_boundaries(tmp_path):
             cloud_mode=True,
             web_dir=web,
             runtime_dir=tmp_path,
-            config_path=ROOT / "config/defaults.json",
+            config_path=ROOT / "app/assets/defaults.json",
             _env_file=None,
         ),
         verifier=TestVerifier(),

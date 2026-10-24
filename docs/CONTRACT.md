@@ -1,6 +1,10 @@
 # Implementation contract
 
-Root owns config/defaults.json, tooling, integration and documentation. Server owner owns server/**. App core owner owns app/pubspec.yaml, lib/core/**, lib/widgets/**, lib/l10n/**, main.dart, app.dart, screens/auth.dart, pairing.dart, dashboard.dart, settings.dart. Retail UI owner owns screens/store_setup.dart, shelf_scan.dart, shelf_results.dart, product.dart, analytics.dart. Monitoring/map owner owns screens/monitoring.dart, store_map.dart and lib/vision/**. Do not revert others' changes.
+The Flutter client lives in app/ and the authenticated FastAPI backend in server/. app/assets/defaults.json defines the shared runtime configuration schema; device preferences and store/shelf settings supply overrides.
+
+Configuration schema v2 uses `settings`, `setting_rules`, `platform_defaults` and `legacy_settings`. Both runtimes validate settings using these rules. Numeric legacy keys are normalized on input; event fields such as `dwell_seconds` retain their existing meanings. The only default JSON is `app/assets/defaults.json`. The known old `config/defaults.json` server setting is migrated; arbitrary custom config paths remain supported.
+
+Monitoring accepts `calibration_id`, device/global `settings`, optional `store_settings` and keyed `shelf_settings`. These are owner-scoped, validated snapshots with shelf > store > device/global precedence. Every monitored shelf must select `remote_server`; standalone inference is not implemented. Scan optionally accepts `shelf_id`, plus validated resolved `active_ai_provider` and `execution_mode` query values so offline preferences take effect after reconnect. Provider credentials/model IDs never come from these requests.
 
 ## Shared Flutter contract
 
@@ -15,3 +19,9 @@ POST /stores/{id}/calibrations body {orientation,frame_width,frame_height,zones:
 GET /stores/{id}/events?after=... returns {items:[]}; GET /stores/{id}/analytics?start=ISO_UTC&end=ISO_UTC returns {start,end,coverage_seconds,visits,total_dwell_seconds,shelves:[{shelf_id,name,visits,dwell_seconds,exposure_seconds}],inventory:[{item_id,shelf_id,product_id,name,quantity,price_minor,last_corrected_at,low_stock_threshold}],capabilities:{...},generated_at}. GET /stores/{id}/analytics/export same params returns CSV with formula-injection-safe cells. PATCH /stores/{id} accepts settings,currency,unit,name. DELETE /stores/{id} removes owned store data. GET /session, DELETE /session revoke local token. /health does not reveal user data.
 
 Event ledger is sole source for analytics numeric values: finalized visit events with started/ended timestamps; coverage segment events; inventory_adjustment with quantity delta and reason. All carry unique id, owner/store/session/shelf IDs, server timestamps, provenance and config/calibration revision. Exposure denotes camera coverage of shelf zone, never per-product gaze. No fake pickup/sales/trend metrics. Stock is recorded quantity, not camera-depleted. HTTP errors {detail: string or structured validation list}, no tracebacks/secrets.
+
+## Direct AI and typed recommendations
+
+Direct mobile/Web AI credentials never enter this server API. Shared task schemas and provider profiles are defined under `ai` in the canonical defaults. Mobile uses encrypted key storage; the server uses its own environment credentials. Generative requests validate JSON and fail over across configured Gemini, NIM and OpenRouter providers.
+
+POST /stores/{id}/decisions requires the existing owner session and reads evidence only from the server SQLite ledger. It returns {actions:[{type,shelf_id,event_ids}],requires_review:true,disclaimer,source,assessments,calibration_status,generated_at,scope_limited}. Unknown citations are rejected before returning a model plan. Missing evidence yields no recommendation and no generative call. See AI_ROUTING.md for the Laya wire contract and deterministic fallback semantics.

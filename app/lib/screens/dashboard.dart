@@ -135,6 +135,12 @@ class DashboardScreen extends ConsumerWidget {
                 ),
                 const SizedBox(height: Tokens.lg),
                 if (store != null)
+                  TextButton.icon(
+                    onPressed: () => context.push('/recommendations'),
+                    icon: const Icon(Icons.rule),
+                    label: Text(tr(context, 'aiRecommendations')),
+                  ),
+                if (store != null)
                   Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [

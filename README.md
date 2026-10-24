@@ -1,6 +1,6 @@
 # ShelfSight for Android
 
-ShelfSight uses Supabase Auth for sign-in and can connect to a Python API running on your Windows PC over your private Wi-Fi. **Google Cloud is not required.** A hosted HTTPS API is optional. Local API sessions use a one-time pairing code and certificate pin; the phone and PC must be on the same reachable network while the server is running. Supabase Auth remains an online dependency. ShelfSight's local server can call Gemini, NVIDIA NIM, or another vision-enabled OpenAI-compatible Chat Completions API. AI API keys stay on the server, not in the Android app.
+ShelfSight uses Supabase Auth for sign-in and can connect to a Python API running on your Windows PC over your private Wi-Fi. **Google Cloud is not required.** A hosted HTTPS API is optional. Local API sessions use a one-time pairing code and certificate pin; the phone and PC must be on the same reachable network while the server is running. Supabase Auth remains an online dependency. ShelfSight's local server can call Gemini, NVIDIA NIM, or another vision-enabled OpenAI-compatible Chat Completions API. Direct AI tools can also use user-entered keys stored encrypted on the device, without Supabase sign-in or a backend. Server credentials remain private to the server.
 
 ## Run locally without Google Cloud
 
@@ -21,7 +21,7 @@ Choose **Hosted API** on the app connection screen to connect to an already depl
 
 The implemented scope is store setup, editable shelf identification suggestions, barcode/manual products, recorded inventory, floor maps, anonymous shelf-zone visits, dwell time, analytics and CSV export. Inventory changes only through explicit corrections. Visits are zone visits, not unique customers or payments. Pickup, put-back, touch and sales estimation are unavailable. Empty analytics do not contain fabricated results.
 
-Monitoring frames are sent over encrypted TLS to the configured ShelfSight API, processed in memory and discarded. Requested shelf scans are sent from the API to its configured vision provider. Shelf names, positions and quantities proposed by AI require human review.
+Monitoring frames are sent over encrypted TLS to the configured ShelfSight API, processed in memory and discarded. Direct-mode scans go from the device to configured AI providers after consent; remote-mode scans go through the API to its configured providers. Shelf names, positions and quantities proposed by AI require human review.
 
 This remains a demo. Existing Firebase users are not automatically imported: users need to create/confirm a Supabase account. Firebase passwords and old Firebase user IDs do not transfer, so data previously scoped to a Firebase UID may need an explicit migration/mapping before those users can access it. Camera accuracy, live sign-in, live vision identification, connection recovery and long-running Android monitoring require separate acceptance testing.
 
@@ -31,4 +31,16 @@ From `server`: `uv sync --extra dev`, `uv run pytest --cov=shelfsight`, and `uv 
 
 From `app`: `flutter pub get`, `flutter analyze`, and `flutter test`. From the repository root: `uv run --python 3.12 python -m unittest discover -s tests`.
 
-The Python tests inject identity/detector providers. They validate behavior, ownership and event calculations, not physical detector accuracy. The evaluation script in `scripts/evaluate_visits.py` compares recorded intervals with independent labels when real measurements are available. See [the audit](docs/APP_AUDIT.md) for verified results and remaining acceptance gaps.
+The Python tests inject identity/detector providers. They validate behavior, ownership and event calculations, not physical detector accuracy. The evaluation script in `scripts/evaluate_visits.py` compares recorded intervals with independent labels when real measurements are available.
+
+## Dynamic configuration
+
+`app/assets/defaults.json` is the only maintained business configuration. Flutter bundles it directly and the backend reads the same file. It defines numeric defaults, allowed provider/mode choices, validation rules and migration aliases for older setting names. Android resources are generated at build time from the canonical `app/assets/logo.jpeg`.
+
+Settings resolves shelf overrides, then store overrides, then device/global defaults. Device preferences and owner/server/store-scoped overrides are saved in secure local storage, including edits made offline. Monitoring requests carry a validated configuration snapshot so saved local overrides reach the server. Stop monitoring before changing settings; existing sessions retain their starting thresholds.
+
+Android and iOS default to `standalone_mobile`; other platforms default to `remote_server`. Mobile mode supports direct photo identification and product text parsing with encrypted on-device AI keys, without backend pairing. Person detection and full offline store management are not implemented. Explicitly pairing or connecting an API selects remote mode. Settings and direct AI tools can be opened before sign-in.
+
+AI selection supports `auto`, `gemini`, `nvidia_nim`, and `openrouter`. Onboarding and Settings accept encrypted device keys and editable model IDs. **Test Connection** reports live latency for the chosen provider only. Generative requests can fail over among configured providers after consent; `auto` uses recent provider errors and latency. Server deployments independently use their private environment keys. See [Direct AI and typed decisions](docs/AI_ROUTING.md) for setup, compile-time injection, provider payloads, local Laya configuration, evidence gates and verification limits.
+
+**Run Labeled Evaluation Replay** is disabled by default and requires user-supplied labeled frame JSON. Every replay frame is badged `labeled_replay`. It reads supplied detections only, has no production detector/API/ledger access, and does not measure detector accuracy. Replay provenance is also excluded from backend business analytics.

@@ -74,7 +74,7 @@ def _model(tmp_path, **overrides):
     )
     values.update(overrides)
     settings = Settings(**values)
-    return OpenAICompatibleVisionModel(settings, BusinessConfig(ROOT / "config/defaults.json"))
+    return OpenAICompatibleVisionModel(settings, BusinessConfig(ROOT / "app/assets/defaults.json"))
 
 
 def test_nvidia_nim_uses_openai_image_data_url_and_validated_scan_output(monkeypatch, tmp_path):

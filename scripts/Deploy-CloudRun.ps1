@@ -48,11 +48,6 @@ if (($billing | Out-String).Trim() -ne 'True') {
     throw "Billing is disabled for $ProjectId. Enable it at https://console.cloud.google.com/billing/linkedaccount?project=$ProjectId and rerun."
 }
 
-$modelPath = Join-Path $projectRoot 'runtime/models/detector.tflite'
-if (-not (Test-Path -LiteralPath $modelPath -PathType Leaf)) {
-    throw 'Provide a verified person detector at runtime/models/detector.tflite before deploying.'
-}
-
 Invoke-Gcloud -Arguments @(
     'services', 'enable', 'run.googleapis.com', 'cloudbuild.googleapis.com',
     'artifactregistry.googleapis.com', "--project=$ProjectId", '--quiet'

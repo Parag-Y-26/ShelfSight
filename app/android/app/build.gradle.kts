@@ -4,7 +4,16 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+// Android and Flutter package the same canonical artwork. No second source image.
+val generatedBrandResources = layout.buildDirectory.dir("generated/brand-res")
+val generateBrandResources by tasks.registering(Copy::class) {
+    from("../../assets/logo.jpeg")
+    into(generatedBrandResources.map { it.dir("drawable") })
+    rename { "shelfsight_logo.jpg" }
+}
+
 android {
+    sourceSets.getByName("main").res.srcDir(generatedBrandResources.get().asFile)
     namespace = "com.shelfsight.shelfsight"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
@@ -37,6 +46,8 @@ android {
         }
     }
 }
+
+tasks.named("preBuild").configure { dependsOn(generateBrandResources) }
 
 kotlin {
     compilerOptions {
