@@ -150,7 +150,7 @@ class _MonitoringScreenState extends ConsumerState<MonitoringScreen>
                 ),
                 const SizedBox(height: Tokens.sm),
                 Text(
-                  tr(context, 'monitorPrivacy'),
+                  tr(context, app.isStandalone ? 'localMonitorPrivacy' : 'monitorPrivacy'),
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
                 if (model.errorKey != null)

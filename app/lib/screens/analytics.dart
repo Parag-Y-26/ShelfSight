@@ -164,7 +164,7 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
           );
         });
       }
-      final response = await app.api.get(
+      final response = await app.repository.get(
         '/stores/${Uri.encodeComponent(storeId)}/analytics',
         query: {'start': start, 'end': end},
       );
@@ -212,7 +212,7 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
     }
     setState(() => _copying = true);
     try {
-      final csv = await app.api.text(
+      final csv = await app.repository.text(
         '/stores/${Uri.encodeComponent(id)}/analytics/export',
         query: {
           'start': _start!.toIso8601String(),

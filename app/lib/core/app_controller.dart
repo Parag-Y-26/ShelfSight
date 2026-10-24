@@ -16,6 +16,8 @@ import 'ai_provider_router.dart';
 import 'autonomous_decision_engine.dart';
 import 'laya_decision_service.dart';
 import 'strings.dart';
+import 'repository.dart';
+import 'standalone_repository.dart';
 export 'api_client.dart' show ApiClient, ApiFailure, friendlyError;
 
 final appControllerProvider = ChangeNotifierProvider<AppController>(
@@ -30,12 +32,14 @@ class AppController extends ChangeNotifier {
     DeviceSettingsStore? settingsStore,
     AiCredentials? aiCredentials,
     AiProviderRouter? aiRouter,
+    StandaloneMobileRepository? localRepository,
   }) : api = api ?? ApiClient(),
        cache = cache ?? OwnerCache(),
        settingsStore = settingsStore ?? DeviceSettingsStore(),
        aiCredentials = aiCredentials ?? AiCredentials(),
        _aiRouter = aiRouter,
        _injectedAiRouter = aiRouter != null,
+       _localRepository = localRepository,
        _auth = auth {
     this.api.onUnauthorized = _sessionExpired;
     unawaited(_bootstrap());
@@ -47,6 +51,7 @@ class AppController extends ChangeNotifier {
     DeviceSettingsStore? settingsStore,
     AiCredentials? aiCredentials,
     AiProviderRouter? aiRouter,
+    StandaloneMobileRepository? localRepository,
     this.config = const {},
     this.store,
     this.stores = const [],
@@ -62,14 +67,46 @@ class AppController extends ChangeNotifier {
        aiCredentials = aiCredentials ?? AiCredentials(),
        _aiRouter = aiRouter,
        _injectedAiRouter = aiRouter != null,
+       _localRepository = localRepository,
+       _standalone = localRepository != null,
        _authenticated = signedIn,
        initialized = true {
+    _defaultConfig = Map<String, dynamic>.from(config);
     AppStrings.setResourceOverlay(config['strings']);
   }
 
   final ApiClient api;
+  StandaloneMobileRepository? _localRepository;
+  bool _standalone = false;
+  bool _usingLocalProfile = false;
+  String? _localProfileName;
+  bool get isStandalone => _standalone;
+  ShelfSightRepository get repository =>
+      _standalone ? _localRepository! : RemoteServerRepository(api);
+  bool get supportsStandalone =>
+      !kIsWeb &&
+      (_localRepository != null ||
+          defaultTargetPlatform == TargetPlatform.android ||
+          defaultTargetPlatform == TargetPlatform.iOS);
+  StandaloneMobileRepository get localRepository {
+    if (!isStandalone) throw const ApiFailure('invalidInput');
+    return _localRepository!;
+  }
+
   final OwnerCache cache;
   final DeviceSettingsStore settingsStore;
+  Future<void> _preferenceWrite = Future<void>.value();
+  Future<void> _persistPreferences(Map<String, dynamic> values) {
+    final snapshot = Map<String, dynamic>.from(
+      jsonDecode(jsonEncode(values)) as Map,
+    );
+    final next = _preferenceWrite
+        .catchError((Object _) {})
+        .then((_) => settingsStore.write(snapshot));
+    _preferenceWrite = next;
+    return next;
+  }
+
   final AiCredentials aiCredentials;
   AiProviderRouter? _aiRouter;
   final bool _injectedAiRouter;
@@ -83,7 +120,7 @@ class AppController extends ChangeNotifier {
     final id = selected['id'].toString();
     if (paired && !isOffline) {
       try {
-        final response = await api.get('/stores/$id/events');
+        final response = await repository.get('/stores/$id/events');
         if (!_current(generation) || store?['id'] != id) {
           throw const ApiFailure('sessionExpired');
         }
@@ -95,10 +132,12 @@ class AppController extends ChangeNotifier {
         if (!_current(generation)) rethrow;
       }
     }
-    final events = await cache.readEvents(
-      id,
-      limit: (config['ai']['limits']['max_decision_events'] as num).toInt(),
-    );
+    final eventLimit =
+        (config['ai']['limits']['max_decision_events'] as num).toInt();
+    final events =
+        isStandalone
+            ? await localRepository.ledger(id, limit: eventLimit)
+            : await cache.readEvents(id, limit: eventLimit);
     if (!_current(generation) || store?['id'] != id) {
       throw const ApiFailure('sessionExpired');
     }
@@ -128,7 +167,21 @@ class AppController extends ChangeNotifier {
     if (!_current(generation) || store?['id'] != id) {
       throw const ApiFailure('sessionExpired');
     }
+    if (isStandalone) await localRepository.saveDecision(id, plan.data);
     return plan;
+  }
+
+  Future<AutonomousActionPlan?> latestLocalDecision() async {
+    final selected = store?['id']?.toString(), generation = _generation;
+    if (!isStandalone || selected == null) return null;
+    final saved = await localRepository.decisions(selected);
+    if (!_current(generation) ||
+        !isStandalone ||
+        store?['id'] != selected ||
+        saved.isEmpty) {
+      return null;
+    }
+    return AutonomousActionPlan(saved.last);
   }
 
   bool settingsSyncPending = false;
@@ -139,7 +192,7 @@ class AppController extends ChangeNotifier {
   Map<String, dynamic> get globalSettings =>
       runtimeConfiguration.resolve(device: deviceOverrides);
   String _scopeKey(String id, {String? shelfId}) =>
-      jsonEncode([_identityUid, api.serverIdentity, id, shelfId]);
+      jsonEncode([_identityUid, repository.identity, id, shelfId]);
   Map<String, dynamic> settingsOverrides({String? shelfId}) {
     if (store == null) return deviceOverrides;
     final target =
@@ -191,6 +244,20 @@ class AppController extends ChangeNotifier {
     String? shelfId,
   }) async {
     final validated = runtimeConfiguration.validate(values);
+    final desiredMode =
+        runtimeConfiguration.resolve(device: validated)['execution_mode'];
+    final switchMode =
+        (global || store == null) &&
+        supportsStandalone &&
+        (validated.containsKey('execution_mode') ||
+            deviceOverrides.containsKey('execution_mode')) &&
+        (desiredMode == 'standalone_mobile') != isStandalone;
+    if (monitoringActive) throw const ApiFailure('settingsAfterMonitoring');
+    if (switchMode && desiredMode == 'standalone_mobile') {
+      await enterStandalone();
+    } else if (switchMode) {
+      await useRemoteMode();
+    }
     final generation = _generation;
     final selectedId = store?['id']?.toString();
     final next = Map<String, dynamic>.from(_preferences);
@@ -201,14 +268,14 @@ class AppController extends ChangeNotifier {
       scopes[_scopeKey(selectedId, shelfId: shelfId)] = validated;
       next['scopes'] = scopes;
     }
-    await settingsStore.write(next);
+    await _persistPreferences(next);
     if (!_current(generation)) return;
     _preferences = next;
     settingsSyncPending = !global && selectedId != null;
     notifyListeners();
     if (!global && selectedId != null && paired && !isOffline) {
       try {
-        await api.patch(
+        await repository.patch(
           shelfId == null ? '/stores/$selectedId' : '/shelves/$shelfId',
           {'settings': validated},
         );
@@ -262,7 +329,8 @@ class AppController extends ChangeNotifier {
   List<Map<String, dynamic>> items = [];
   List<Map<String, dynamic>> calibrations = [];
   bool get authenticated => _authenticated;
-  bool get paired => api.paired;
+  bool get paired => repository.ready;
+  bool get ready => repository.ready;
   List<String> get supportedLocaleTags {
     final configured = config['locales'];
     return {
@@ -311,6 +379,7 @@ class AppController extends ChangeNotifier {
   }
 
   String get displayName {
+    if (_usingLocalProfile) return _localProfileName ?? '';
     final user = _auth?.auth.currentUser;
     final metadataName =
         user?.userMetadata?['display_name'] ??
@@ -329,25 +398,28 @@ class AppController extends ChangeNotifier {
       );
       _setConfig(Map<String, dynamic>.from(_defaultConfig));
       await restoreSettings();
-      const supabaseUrl = String.fromEnvironment('SUPABASE_URL');
-      const publishableKey = String.fromEnvironment('SUPABASE_PUBLISHABLE_KEY');
-      supabaseConfigured = supabaseUrl.isNotEmpty && publishableKey.isNotEmpty;
-      if (supabaseConfigured) {
-        await Supabase.initialize(
-          url: supabaseUrl,
-          publishableKey: publishableKey,
+      final profile =
+          _preferences['standalone_identity'] ?? _preferences['local_profile'];
+      if (supportsStandalone &&
+          globalSettings['execution_mode'] == 'standalone_mobile' &&
+          profile is Map &&
+          profile['active'] == true) {
+        await _openStandalone(
+          profile['id'].toString(),
+          profile['name'].toString(),
+          localProfile: true,
         );
-        _auth ??= Supabase.instance.client;
-        _authSubscription = _auth!.auth.onAuthStateChange.listen((state) {
-          if (state.event == AuthChangeEvent.passwordRecovery) {
-            passwordRecoveryPending = true;
-            unawaited(_userChanged(null));
-            return;
-          }
-          final user = state.session?.user;
-          if (user?.id != _identityUid) unawaited(_userChanged(user));
-        });
-        await _userChanged(_auth!.auth.currentUser);
+        return;
+      }
+      if (supportsStandalone &&
+          globalSettings['execution_mode'] == 'standalone_mobile') {
+        // Defer even optional cloud-auth initialization until explicitly used.
+        // A compiled Supabase project must not make offline startup wait on it.
+        supabaseConfigured =
+            const String.fromEnvironment('SUPABASE_URL').isNotEmpty &&
+            const String.fromEnvironment('SUPABASE_PUBLISHABLE_KEY').isNotEmpty;
+      } else {
+        await _initializeRemoteAuthentication();
       }
     } catch (_) {
       bootstrapError = 'configurationFailed';
@@ -358,9 +430,45 @@ class AppController extends ChangeNotifier {
     }
   }
 
+  Future<void> _initializeRemoteAuthentication() async {
+    const supabaseUrl = String.fromEnvironment('SUPABASE_URL');
+    const publishableKey = String.fromEnvironment('SUPABASE_PUBLISHABLE_KEY');
+    supabaseConfigured = supabaseUrl.isNotEmpty && publishableKey.isNotEmpty;
+    if (supabaseConfigured) {
+      if (_auth == null) {
+        await Supabase.initialize(
+          url: supabaseUrl,
+          publishableKey: publishableKey,
+        );
+      }
+      _auth ??= Supabase.instance.client;
+      _authSubscription ??= _auth!.auth.onAuthStateChange.listen((state) {
+        if (_usingLocalProfile) return;
+        if (state.event == AuthChangeEvent.passwordRecovery) {
+          passwordRecoveryPending = true;
+          unawaited(_userChanged(null));
+          return;
+        }
+        final user = state.session?.user;
+        if (user?.id != _identityUid) unawaited(_userChanged(user));
+      });
+      await _userChanged(_auth!.auth.currentUser);
+    }
+  }
+
   Future<void> _userChanged(User? user) async {
     if (passwordRecoveryPending && user != null) {
       await _userChanged(null);
+      return;
+    }
+    if (user != null &&
+        supportsStandalone &&
+        globalSettings['execution_mode'] == 'standalone_mobile') {
+      await _openStandalone(
+        user.id,
+        user.email?.split('@').first ?? '',
+        localProfile: false,
+      );
       return;
     }
     final generation = ++_generation;
@@ -371,6 +479,8 @@ class AppController extends ChangeNotifier {
     _authenticated = user != null;
     _clearBusinessState();
     if (user == null) {
+      await _localRepository?.close();
+      _standalone = false;
       await api.clear();
       await cache.close();
     } else {
@@ -411,7 +521,139 @@ class AppController extends ChangeNotifier {
 
   static const _authRedirect = 'com.shelfsight.app://auth-callback';
 
+  Future<void> enterStandalone({bool requireApiKey = true}) async {
+    final generation = _generation;
+    if (passwordRecoveryPending) throw const ApiFailure('chooseNewPassword');
+    if (monitoringActive) throw const ApiFailure('settingsAfterMonitoring');
+    if (!supportsStandalone) throw const ApiFailure('localModeUnsupported');
+    if (requireApiKey) {
+      var available = false;
+      for (final provider in AiCredentials.providers) {
+        if ((await aiCredentials.key(provider)).isNotEmpty) available = true;
+        if (!_current(generation)) throw const ApiFailure('sessionExpired');
+      }
+      if (!available) throw const ApiFailure('localNeedsKey');
+    }
+    final cloudUser = _auth?.auth.currentUser;
+    if (cloudUser != null && !_usingLocalProfile) {
+      _preferences = {
+        ..._preferences,
+        'global': {...deviceOverrides, 'execution_mode': 'standalone_mobile'},
+      };
+      await _persistPreferences(_preferences);
+      if (!_current(generation)) throw const ApiFailure('sessionExpired');
+      await _openStandalone(
+        cloudUser.id,
+        cloudUser.email?.split('@').first ?? '',
+        localProfile: false,
+      );
+      return;
+    }
+    final previous = _preferences['local_profile'];
+    final profile =
+        previous is Map
+            ? Map<String, dynamic>.from(previous)
+            : <String, dynamic>{
+              'id': StandaloneMobileRepository.newId(),
+              'name': 'Local profile',
+            };
+    profile['active'] = true;
+    _preferences = {
+      ..._preferences,
+      'local_profile': profile,
+      'global': {...deviceOverrides, 'execution_mode': 'standalone_mobile'},
+    };
+    await _persistPreferences(_preferences);
+    if (!_current(generation)) throw const ApiFailure('sessionExpired');
+    await _openStandalone(
+      profile['id'].toString(),
+      profile['name'].toString(),
+      localProfile: true,
+    );
+  }
+
+  Future<void> _openStandalone(
+    String uid,
+    String name, {
+    required bool localProfile,
+  }) async {
+    final generation = ++_generation;
+    _expiryTimer?.cancel();
+    _usingLocalProfile = localProfile;
+    _localProfileName = name;
+    _standalone = true;
+    _authenticated = true;
+    _identityUid = uid;
+    final previousIdentity = _preferences['standalone_identity'];
+    _preferences = {
+      ..._preferences,
+      'standalone_identity': {
+        'id': uid,
+        'name': name,
+        'active': true,
+        'source':
+            previousIdentity is Map && previousIdentity['id'] == uid
+                ? previousIdentity['source']
+                : localProfile
+                ? 'local'
+                : 'cloud_cached',
+      },
+    };
+    await _persistPreferences(_preferences);
+    if (!_current(generation)) return;
+    _clearBusinessState();
+    _localRepository ??= StandaloneMobileRepository(
+      config: _defaultConfig.isEmpty ? config : _defaultConfig,
+    );
+    try {
+      await api.clear();
+      if (!_current(generation)) return;
+      await _localRepository!.open(uid);
+      if (!_current(generation)) return;
+      await cache.open(uid, server: repository.identity);
+      if (!_current(generation)) return;
+      await refresh();
+    } catch (_) {
+      if (_current(generation)) {
+        _authenticated = false;
+        error = 'localStorageFailed';
+      }
+      rethrow;
+    }
+    if (_current(generation)) notifyListeners();
+  }
+
+  Future<void> useRemoteMode() async {
+    if (monitoringActive) throw const ApiFailure('settingsAfterMonitoring');
+    ++_generation;
+    final wasLocalProfile = _usingLocalProfile;
+    await _localRepository?.close();
+    await cache.close();
+    _standalone = false;
+    _usingLocalProfile = false;
+    _clearBusinessState();
+    _preferences = {
+      ..._preferences,
+      'global': {...deviceOverrides, 'execution_mode': 'remote_server'},
+      if (_preferences['standalone_identity'] is Map)
+        'standalone_identity': {
+          ..._preferences['standalone_identity'] as Map,
+          'active': false,
+        },
+      if (_preferences['local_profile'] is Map)
+        'local_profile': {
+          ..._preferences['local_profile'] as Map,
+          'active': false,
+        },
+    };
+    await _persistPreferences(_preferences);
+    if (wasLocalProfile) _authenticated = false;
+    await _initializeRemoteAuthentication();
+    notifyListeners();
+  }
+
   Future<void> login(String email, String password) async {
+    await _initializeRemoteAuthentication();
     await _auth!.auth.signInWithPassword(
       email: email.trim(),
       password: password,
@@ -419,6 +661,7 @@ class AppController extends ChangeNotifier {
   }
 
   Future<bool> register(String name, String email, String password) async {
+    await _initializeRemoteAuthentication();
     final result = await _auth!.auth.signUp(
       email: email.trim(),
       password: password,
@@ -428,10 +671,13 @@ class AppController extends ChangeNotifier {
     return result.session != null;
   }
 
-  Future<void> resetPassword(String email) => _auth!.auth.resetPasswordForEmail(
-    email.trim(),
-    redirectTo: _authRedirect,
-  );
+  Future<void> resetPassword(String email) async {
+    await _initializeRemoteAuthentication();
+    await _auth!.auth.resetPasswordForEmail(
+      email.trim(),
+      redirectTo: _authRedirect,
+    );
+  }
 
   Future<void> updatePassword(String password) async {
     await _auth!.auth.updateUser(UserAttributes(password: password));
@@ -440,6 +686,7 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> googleLogin() async {
+    await _initializeRemoteAuthentication();
     if (kIsWeb) {
       throw const ApiFailure('googleUnsupported');
     }
@@ -462,6 +709,7 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> reconnectCloud({String? address}) async {
+    if (isStandalone) await useRemoteMode();
     if (address != null) await api.setApiAddress(address);
     await saveSettings({
       ...deviceOverrides,
@@ -476,6 +724,7 @@ class AppController extends ChangeNotifier {
     required String secret,
     required String deviceName,
   }) async {
+    if (isStandalone) await useRemoteMode();
     final generation = ++_generation;
     final user = _auth?.auth.currentUser;
     final idToken = _auth?.auth.currentSession?.accessToken;
@@ -507,7 +756,7 @@ class AppController extends ChangeNotifier {
           : [];
   Future<void> loadStores() async {
     final generation = _generation;
-    final result = await api.get('/stores');
+    final result = await repository.get('/stores');
     if (!_current(generation)) return;
     stores = _list(result is Map ? result['items'] : null);
     await cache.put('stores', stores);
@@ -515,9 +764,12 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> selectStore(String id) async {
+    if (monitoringActive && store?['id'] != id) {
+      throw const ApiFailure('settingsAfterMonitoring');
+    }
     final generation = _generation;
     final selection = ++_selectionGeneration;
-    final data = await api.get('/stores/$id/snapshot');
+    final data = await repository.get('/stores/$id/snapshot');
     if (!_current(generation) || selection != _selectionGeneration) return;
     if (data is! Map || data['store'] is! Map) {
       throw const ApiFailure('invalidResponse');
@@ -572,7 +824,7 @@ class AppController extends ChangeNotifier {
     error = null;
     notifyListeners();
     try {
-      final data = await api.get('/config');
+      final data = await repository.get('/config');
       if (!_current(generation)) return;
       if (data is Map) {
         _setConfig(Map<String, dynamic>.from(data));
@@ -607,15 +859,20 @@ class AppController extends ChangeNotifier {
   Future<Map<String, dynamic>?> readCached(String key) => cache.read(key);
   Future<void> cacheValue(String key, dynamic value) => cache.put(key, value);
   Future<void> deleteSelectedStore() async {
+    if (monitoringActive) throw const ApiFailure('settingsAfterMonitoring');
     final id = store?['id'];
     if (id == null) return;
-    await api.delete('/stores/$id');
+    await repository.delete('/stores/$id');
     await cache.erase();
     _clearBusinessState();
     await refresh();
   }
 
   Future<void> disconnect() async {
+    if (isStandalone) {
+      await useRemoteMode();
+      return;
+    }
     ++_generation;
     _clearBusinessState();
     _expiryTimer?.cancel();
@@ -670,8 +927,30 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> logout() async {
+    if (monitoringActive) throw const ApiFailure('settingsAfterMonitoring');
     ++_generation;
     _authenticated = false;
+    if (isStandalone) {
+      await _localRepository?.close();
+      _standalone = false;
+      _usingLocalProfile = false;
+      final identity = _preferences['standalone_identity'];
+      if (identity is Map) {
+        _preferences = {
+          ..._preferences,
+          'standalone_identity': {...identity, 'active': false},
+        };
+        await _persistPreferences(_preferences);
+      }
+      final profile = _preferences['local_profile'];
+      if (profile is Map) {
+        _preferences = {
+          ..._preferences,
+          'local_profile': {...profile, 'active': false},
+        };
+        await _persistPreferences(_preferences);
+      }
+    }
     _clearBusinessState();
     _expiryTimer?.cancel();
     try {
@@ -699,6 +978,7 @@ class AppController extends ChangeNotifier {
     _expiryTimer?.cancel();
     _authSubscription?.cancel();
     unawaited(cache.close());
+    unawaited(_localRepository?.close());
     super.dispose();
   }
 }

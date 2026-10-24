@@ -116,6 +116,41 @@ class _CloudConnectionScreenState extends ConsumerState<CloudConnectionScreen> {
       child: ListView(
         padding: const EdgeInsets.all(Tokens.lg),
         children: [
+          if (app.supportsStandalone)
+            InfoCard(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    tr(context, 'localModeTitle'),
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                  Text(tr(context, 'localModeHelp')),
+                  BrandButton(
+                    label: tr(context, 'localModeStart'),
+                    icon: Icons.phone_android,
+                    onPressed:
+                        _busy
+                            ? null
+                            : () async {
+                              setState(() {
+                                _busy = true;
+                                _error = null;
+                              });
+                              try {
+                                await app.enterStandalone();
+                              } catch (e) {
+                                if (mounted) {
+                                  setState(() => _error = friendlyError(e));
+                                }
+                              } finally {
+                                if (mounted) setState(() => _busy = false);
+                              }
+                            },
+                  ),
+                ],
+              ),
+            ),
           Wrap(
             alignment: WrapAlignment.center,
             spacing: Tokens.sm,

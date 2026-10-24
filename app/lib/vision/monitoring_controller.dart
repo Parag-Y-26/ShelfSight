@@ -10,8 +10,12 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../core/app_controller.dart';
 import '../core/configuration.dart';
+import '../core/standalone_repository.dart';
+import '../core/temp_photo.dart';
 import 'frame_encoder.dart';
 import 'geometry.dart';
+import 'local_tracker.dart';
+import 'local_person_detector.dart';
 
 enum MonitorPhase {
   initializing,
@@ -24,8 +28,16 @@ enum MonitorPhase {
 }
 
 class MonitoringController extends ChangeNotifier {
-  MonitoringController(this.app);
+  MonitoringController(this.app, {PersonDetector Function()? detectorFactory})
+    : _detectorFactory = detectorFactory ?? createLocalPersonDetector;
   final AppController app;
+  final PersonDetector Function() _detectorFactory;
+  PersonDetector? _localDetector;
+  BottomCenterIoUTracker? _localTracker;
+  StandaloneMobileRepository? _sessionRepository;
+  Future<void>? _localFrameFuture;
+  Future<void>? _localStopFuture;
+  int? _localOwnerGeneration;
   CameraController? camera;
   MonitorPhase phase = MonitorPhase.initializing;
   String? errorKey;
@@ -216,7 +228,7 @@ class MonitoringController extends ChangeNotifier {
     final generation = _cameraGeneration;
     try {
       final photo = await controller.takePicture();
-      final image = img.decodeImage(await photo.readAsBytes());
+      final image = img.decodeImage(await consumeTempPhoto(photo.path));
       if (_disposed || generation != _cameraGeneration || image == null) return;
       final size = uprightDimensions(image.width, image.height, 0, maximum);
       final aspect = image.width / image.height;
@@ -306,7 +318,7 @@ class MonitoringController extends ChangeNotifier {
       if (aspectChanged) _invalidateCalibration();
       _notify();
     }
-    if (!running || _socket == null) return;
+    if (!running || (_socket == null && _localDetector == null)) return;
     final interval = intervalMs;
     if (interval == null) return;
     final now = DateTime.now().millisecondsSinceEpoch;
@@ -314,7 +326,7 @@ class MonitoringController extends ChangeNotifier {
     _lastCapturedAtMs = now;
     // Copy plugin-owned buffers once. One pending raw frame is replaced by the
     // latest sample; no work queue accumulates when inference/network is slow.
-    _pending = RawCameraFrame(
+    final frame = RawCameraFrame(
       width: image.width,
       height: image.height,
       format: image.format.group.name,
@@ -332,7 +344,113 @@ class MonitoringController extends ChangeNotifier {
           )
           .toList(growable: false),
     );
-    unawaited(_drain());
+    unawaited(submitFrame(frame));
+  }
+
+  /// Single bounded camera-buffer ingress shared by native capture and detector
+  /// tests. It cannot start monitoring or write outside the calibrated session.
+  Future<void> submitFrame(RawCameraFrame frame) async {
+    if (_disposed || !running || frame.orientation != orientation) return;
+    _pending = frame;
+    if (_localDetector != null) {
+      await _drainLocal();
+    } else {
+      await _drain();
+    }
+  }
+
+  Future<void> _drainLocal() async {
+    if (_disposed || _encoding || !running || _localStopFuture != null) return;
+    final frame = _pending,
+        detector = _localDetector,
+        tracker = _localTracker,
+        id = sessionId;
+    final repo = _sessionRepository;
+    if (frame == null ||
+        detector == null ||
+        tracker == null ||
+        id == null ||
+        repo == null) {
+      return;
+    }
+    _pending = null;
+    _encoding = true;
+    final generation = _sessionGeneration,
+        ownerGeneration = _localOwnerGeneration;
+    Future<void> process() async {
+      final clock = Stopwatch()..start();
+      try {
+        final thresholds =
+            zones
+                .map(
+                  (z) =>
+                      app.shelves
+                          .where((s) => s['id'] == z.shelfId)
+                          .firstOrNull,
+                )
+                .map((s) => _value('detection_confidence_threshold', s))
+                .whereType<double>()
+                .toList();
+        final detections = await detector.detect(
+          frame,
+          threshold: thresholds.reduce(math.min),
+        );
+        final frameAge =
+            DateTime.now().millisecondsSinceEpoch - frame.capturedAtMs;
+        if (frameAge < 0 || (_ackLimitMs != null && frameAge > _ackLimitMs!)) {
+          if (generation == _sessionGeneration) {
+            unawaited(stop(reason: 'monitorAckTimeout'));
+          }
+          return;
+        }
+        if (_disposed ||
+            generation != _sessionGeneration ||
+            app.identityGeneration != ownerGeneration ||
+            frame.orientation != orientation) {
+          return;
+        }
+        final now = frame.capturedAtMs / 1000;
+        final visits = tracker.update(detections, now);
+        final recorded = await repo.recordFrame(
+          id,
+          visits: visits,
+          active: tracker.active(),
+          at: now,
+          grace: (_value('tracking_grace_sec')!),
+        );
+        if (_disposed ||
+            generation != _sessionGeneration ||
+            app.identityGeneration != ownerGeneration) {
+          return;
+        }
+        clock.stop();
+        processingMs = clock.elapsedMicroseconds / 1000;
+        acknowledgedFrames++;
+        // All frames and inference stay in process; no cloud tokens are spent.
+        transmittedBytes = 0;
+        lastAck = DateTime.now();
+        tracks = tracker.visible();
+        activeVisits = tracker.active();
+        events = [...recorded.reversed, ...events].take(1000).toList();
+        phase = MonitorPhase.live;
+        if (!app.monitoringActive) app.markMonitoringActive(true);
+        _notify();
+      } catch (_) {
+        if (generation == _sessionGeneration) {
+          unawaited(stop(reason: 'monitorFrameFailed'));
+        }
+      } finally {
+        _encoding = false;
+        if (_pending != null && running && _localStopFuture == null) {
+          unawaited(_drainLocal());
+        }
+      }
+    }
+
+    final future = process();
+    _localFrameFuture = future;
+    await future;
+    if (identical(_localFrameFuture, future)) _localFrameFuture = null;
   }
 
   Future<void> _drain() async {
@@ -440,16 +558,20 @@ class MonitoringController extends ChangeNotifier {
     errorKey = null;
     final savedOrientation = orientation;
     final savedWidth = frameWidth, savedHeight = frameHeight;
+    final ownerGeneration = app.identityGeneration;
+    final repository = app.repository;
     final savedZones = List<CameraZone>.from(zones);
     _notify();
     try {
-      final data = await app.api.post('/stores/$storeId/calibrations', {
+      final data = await repository.post('/stores/$storeId/calibrations', {
         'orientation': savedOrientation,
         'frame_width': savedWidth,
         'frame_height': savedHeight,
         'zones': savedZones.map((z) => z.toJson()).toList(),
       });
       if (_disposed ||
+          ownerGeneration != app.identityGeneration ||
+          app.store?['id'] != storeId ||
           orientation != savedOrientation ||
           frameWidth != savedWidth ||
           frameHeight != savedHeight ||
@@ -470,6 +592,10 @@ class MonitoringController extends ChangeNotifier {
 
   Future<void> start() async {
     if (!canStart) return;
+    if (app.isStandalone) {
+      await _startLocal();
+      return;
+    }
     if (!app.canUseRemoteMonitoring(zones.map((zone) => zone.shelfId))) {
       errorKey = 'standaloneUnavailable';
       _notify();
@@ -484,7 +610,7 @@ class MonitoringController extends ChangeNotifier {
     final generation = ++_sessionGeneration;
     _notify();
     try {
-      final configuration = await app.api.get('/config');
+      final configuration = await app.repository.get('/config');
       if (configuration is! Map) throw const FormatException();
       _config = Map<String, dynamic>.from(configuration);
       if (!providerAvailable) {
@@ -502,7 +628,7 @@ class MonitoringController extends ChangeNotifier {
           savedOrientation != orientation) {
         return;
       }
-      final data = await app.api.post('/stores/$storeId/monitoring', {
+      final data = await app.repository.post('/stores/$storeId/monitoring', {
         'calibration_id': savedCalibration,
         ...app.monitoringSettings,
       });
@@ -513,14 +639,14 @@ class MonitoringController extends ChangeNotifier {
           savedCalibration != calibrationId ||
           savedOrientation != orientation) {
         try {
-          await app.api.post('/monitoring/$id/stop');
+          await app.repository.post('/monitoring/$id/stop');
         } catch (_) {
           /* server closes on disconnect */
         }
         return;
       }
       sessionId = id;
-      final socket = await app.api.openSocket('/monitoring/$id/stream');
+      final socket = await app.repository.openSocket('/monitoring/$id/stream');
       if (_disposed || generation != _sessionGeneration) {
         await socket.sink.close(1001);
         return;
@@ -565,6 +691,97 @@ class MonitoringController extends ChangeNotifier {
     } finally {
       _notify();
     }
+  }
+
+  Future<void> _startLocal() async {
+    final storeId = app.store?['id']?.toString();
+    if (storeId == null || kIsWeb) return;
+    if (zones.any(
+      (z) =>
+          app.effectiveSettings(
+            app.shelves.where((s) => s['id'] == z.shelfId).firstOrNull,
+          )['execution_mode'] !=
+          'standalone_mobile',
+    )) {
+      errorKey = 'localModeMismatch';
+      _notify();
+      return;
+    }
+    phase = MonitorPhase.starting;
+    errorKey = null;
+    final generation = ++_sessionGeneration, owner = app.identityGeneration;
+    final savedCalibration = calibrationId;
+    final repo = app.localRepository;
+    String? createdSessionId;
+    _notify();
+    try {
+      if (_localStopFuture != null) await _localStopFuture;
+      final data = await repo.post('/stores/$storeId/monitoring', {
+        'calibration_id': savedCalibration,
+        ...app.monitoringSettings,
+      });
+      createdSessionId = data['id'].toString();
+      if (_disposed ||
+          generation != _sessionGeneration ||
+          savedCalibration != calibrationId ||
+          owner != app.identityGeneration) {
+        await repo.post('/monitoring/${data['id']}/stop');
+        return;
+      }
+      _localDetector = _detectorFactory();
+      _localTracker = BottomCenterIoUTracker(
+        zones: List.unmodifiable(zones),
+        defaults: app.effectiveSettings(),
+        shelfSettings: {
+          for (final s in app.shelves)
+            s['id'].toString(): app.effectiveSettings(s),
+        },
+      );
+      _sessionRepository = repo;
+      _localOwnerGeneration = owner;
+      sessionId = data['id'];
+      _sequence = 0;
+      _lastCapturedAtMs = 0;
+      _pending = null;
+      tracks = [];
+      events = [];
+      activeVisits = [];
+      processingMs = null;
+      lastAck = null;
+      acknowledgedFrames = transmittedBytes = 0;
+      phase = MonitorPhase.waiting;
+      app.markMonitoringActive(true);
+      final opened = DateTime.now();
+      _watchdog = Timer.periodic(Duration(milliseconds: intervalMs!), (_) {
+        if (!_disposed &&
+            generation == _sessionGeneration &&
+            DateTime.now().difference(lastAck ?? opened).inMilliseconds >
+                (_ackLimitMs!)) {
+          unawaited(stop(reason: 'monitorAckTimeout'));
+        }
+      });
+    } catch (_) {
+      if (createdSessionId != null) {
+        try {
+          await repo.post('/monitoring/$createdSessionId/stop');
+        } catch (_) {}
+      }
+      if (generation == _sessionGeneration) {
+        try {
+          await _localDetector?.close();
+        } catch (_) {}
+        _localDetector = null;
+        _localTracker = null;
+        _sessionRepository = null;
+        sessionId = null;
+        _watchdog?.cancel();
+        _watchdog = null;
+        if (app.monitoringActive) app.markMonitoringActive(false);
+        phase = MonitorPhase.unavailable;
+        errorKey = 'monitorStartFailed';
+      }
+    }
+    _notify();
   }
 
   void _onMessage(dynamic message, int generation) {
@@ -630,6 +847,20 @@ class MonitoringController extends ChangeNotifier {
           : [];
 
   Future<void> stop({String? reason}) async {
+    if (_localStopFuture != null) {
+      await _localStopFuture;
+      return;
+    }
+    if (_localDetector != null || _localTracker != null) {
+      final future = _stopLocal(reason: reason);
+      _localStopFuture = future;
+      try {
+        await future;
+      } finally {
+        _localStopFuture = null;
+      }
+      return;
+    }
     ++_sessionGeneration;
     final id = sessionId;
     final socket = _socket;
@@ -654,7 +885,7 @@ class MonitoringController extends ChangeNotifier {
     // closes the stream first so a failed HTTP call cannot bridge a time gap.
     if (id != null && reason == null) {
       try {
-        await app.api.post('/monitoring/$id/stop').timeout(timeout);
+        await app.repository.post('/monitoring/$id/stop').timeout(timeout);
       } catch (_) {
         if (!_disposed) errorKey = 'monitorStopUnconfirmed';
       }
@@ -666,7 +897,7 @@ class MonitoringController extends ChangeNotifier {
     if (id != null) {
       try {
         if (reason != null) {
-          await app.api.post('/monitoring/$id/stop').timeout(timeout);
+          await app.repository.post('/monitoring/$id/stop').timeout(timeout);
         }
         if (!_disposed) await loadEvents();
       } catch (_) {
@@ -676,11 +907,46 @@ class MonitoringController extends ChangeNotifier {
     _notify();
   }
 
+  Future<void> _stopLocal({String? reason}) async {
+    ++_sessionGeneration;
+    _watchdog?.cancel();
+    _watchdog = null;
+    final id = sessionId, repo = _sessionRepository, detector = _localDetector;
+    sessionId = null;
+    _pending = null;
+    _localDetector = null;
+    _localTracker = null;
+    _sessionRepository = null;
+    // Serialize with any ledger commit already in progress before finalizing.
+    await _localFrameFuture;
+    try {
+      if (id != null && repo != null) await repo.post('/monitoring/$id/stop');
+      if (!_disposed) await loadEvents();
+    } catch (_) {
+      if (!_disposed) errorKey = 'monitorStopUnconfirmed';
+    }
+    try {
+      await detector?.close();
+    } catch (_) {
+      if (!_disposed) {
+        errorKey ??= 'monitorFrameFailed';
+      }
+    }
+    tracks = [];
+    activeVisits = [];
+    if (app.monitoringActive) app.markMonitoringActive(false);
+    if (!_disposed) {
+      phase = MonitorPhase.stopped;
+      errorKey ??= reason;
+      _notify();
+    }
+  }
+
   Future<void> loadEvents() async {
     final id = app.store?['id'];
     if (id == null) return;
     try {
-      final result = await app.api.get('/stores/$id/events');
+      final result = await app.repository.get('/stores/$id/events');
       if (_disposed || result is! Map) return;
       events = _maps(result['items']).reversed.toList();
       _notify();

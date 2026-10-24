@@ -289,7 +289,7 @@ class _ShelfResultsScreenState extends ConsumerState<ShelfResultsScreen> {
       _error = null;
     });
     try {
-      await app.api.post(
+      await app.repository.post(
         '/stores/${Uri.encodeComponent(storeId)}/shelves',
         result,
       );
@@ -501,7 +501,7 @@ class _ShelfResultsScreenState extends ConsumerState<ShelfResultsScreen> {
               (widget.candidates == null ? 'manual' : 'gemini_reviewed'),
         };
         if (draft.productId == null) {
-          final saved = await app.api.post(
+          final saved = await app.repository.post(
             '/stores/${Uri.encodeComponent(storeId)}/products',
             productPayload,
           );
@@ -511,7 +511,7 @@ class _ShelfResultsScreenState extends ConsumerState<ShelfResultsScreen> {
           draft.productId = id;
           draft.productDirty = false;
         } else if (draft.productDirty) {
-          await app.api.patch(
+          await app.repository.patch(
             '/products/${Uri.encodeComponent(draft.productId!)}',
             productPayload,
           );
@@ -525,7 +525,7 @@ class _ShelfResultsScreenState extends ConsumerState<ShelfResultsScreen> {
           'quantity': draft.quantity,
         };
         if (draft.itemId == null) {
-          final saved = await app.api.post(
+          final saved = await app.repository.post(
             '/shelves/${Uri.encodeComponent(_shelfId)}/items',
             itemPayload,
           );
@@ -533,7 +533,7 @@ class _ShelfResultsScreenState extends ConsumerState<ShelfResultsScreen> {
           if (id == null) throw StateError('missing_item_id');
           draft.itemId = id;
         } else if (draft.dirty) {
-          await app.api.patch('/items/${Uri.encodeComponent(draft.itemId!)}', {
+          await app.repository.patch('/items/${Uri.encodeComponent(draft.itemId!)}', {
             'row': draft.row,
             'slot': draft.slot,
             'quantity': draft.quantity,
@@ -546,7 +546,7 @@ class _ShelfResultsScreenState extends ConsumerState<ShelfResultsScreen> {
         final rows = _drafts
             .map((draft) => draft.row ?? 1)
             .reduce((a, b) => a > b ? a : b);
-        await app.api.patch('/shelves/${Uri.encodeComponent(_shelfId)}', {
+        await app.repository.patch('/shelves/${Uri.encodeComponent(_shelfId)}', {
           'rows': rows,
         });
       }

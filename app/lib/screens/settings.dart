@@ -126,19 +126,31 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   style: Theme.of(context).textTheme.titleLarge,
                 ),
                 const SizedBox(height: Tokens.sm),
-                SelectableText(c.api.serverAddress ?? tr(context, 'notPaired')),
-                Text(
-                  tr(context, 'sessionExpiry', {
-                    'time':
-                        c.api.expiresAt?.toLocal().toString() ??
-                        tr(context, 'unknown'),
-                  }),
+                SelectableText(
+                  c.isStandalone
+                      ? tr(context, 'localModeTitle')
+                      : c.api.serverAddress ?? tr(context, 'notPaired'),
                 ),
+                if (!c.isStandalone)
+                  Text(
+                    tr(context, 'sessionExpiry', {
+                      'time':
+                          c.api.expiresAt?.toLocal().toString() ??
+                          tr(context, 'unknown'),
+                    }),
+                  ),
                 const SizedBox(height: Tokens.md),
                 Wrap(
                   spacing: Tokens.sm,
                   runSpacing: Tokens.sm,
                   children: [
+                    if (c.supportsStandalone && !c.isStandalone)
+                      BrandButton(
+                        label: tr(context, 'localModeStart'),
+                        icon: Icons.phone_android,
+                        outlined: true,
+                        onPressed: _busy ? null : () => _run(c.enterStandalone),
+                      ),
                     BrandButton(
                       label: tr(context, 'refresh'),
                       icon: Icons.refresh,
@@ -146,7 +158,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       onPressed: _busy ? null : () => _run(c.refresh),
                     ),
                     BrandButton(
-                      label: tr(context, 'changeLaptop'),
+                      label: tr(
+                        context,
+                        c.isStandalone ? 'localUseRemote' : 'changeLaptop',
+                      ),
                       icon: Icons.cloud_sync_outlined,
                       outlined: true,
                       onPressed: _busy ? null : () => _run(c.disconnect),
@@ -257,7 +272,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                               : (value) {
                                 if (value != null) {
                                   _run(() async {
-                                    await c.api.patch(
+                                    await c.repository.patch(
                                       '/stores/${c.store!['id']}',
                                       {field.$1: value},
                                     );
@@ -386,7 +401,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 ),
                 if (c.effectiveSettings()['execution_mode'] ==
                     'standalone_mobile')
-                  Text(tr(context, 'standaloneUnavailable')),
+                  Text(tr(context, 'localModeHelp')),
                 if (c.monitoringActive)
                   Text(tr(context, 'settingsAfterMonitoring')),
                 Text(

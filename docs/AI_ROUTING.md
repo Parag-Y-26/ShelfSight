@@ -2,7 +2,7 @@
 
 Onboarding and Settings contain **Direct AI connections**. Expand Gemini, NVIDIA NIM or OpenRouter, enter a key and save it. Vision and text model IDs are editable. **Test Connection** sends a small structured text request to that provider only and displays the measured response latency. It never silently tests another key; the probe does not establish image accuracy or phone performance.
 
-**Scan using saved API keys** and **Parse product text** work before Supabase sign-in or backend pairing. A photo requires consent before upload. In mobile mode, the request goes directly to configured AI providers. For an existing connected store, suggestions enter the existing review screen; standalone previews create no inventory. Person detection, offline store CRUD and local monitoring remain outside this phase.
+**Scan using saved API keys** and **Parse product text** work before cloud sign-in or backend pairing. A photo requires consent before upload. In mobile mode, the request goes directly to configured AI providers. For an existing local or remote store, suggestions enter the review screen; unbound previews create no inventory. [Standalone mobile](STANDALONE_MOBILE.md) now adds local profiles, SQLite store management and on-device monitoring, with the documented pose and device-verification limits.
 
 ## Credentials
 

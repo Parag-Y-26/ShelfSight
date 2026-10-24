@@ -1,4 +1,5 @@
 import 'package:camera/camera.dart';
+import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
@@ -46,6 +47,19 @@ Uri apiUri(String value) {
 
 /// Same-origin HTTPS and Supabase-verified sessions. Tokens stay in memory.
 class ApiClient {
+  Future<dynamic> uploadBytes(String path, Uint8List bytes) async {
+    final generation = _generation;
+    final response = await _ready(path).post<dynamic>(
+      path,
+      data: FormData.fromMap({
+        'file': MultipartFile.fromBytes(bytes, filename: 'capture.jpg'),
+      }),
+      options: _options,
+    );
+    if (generation != _generation) throw const ApiFailure('sessionExpired');
+    return response.data;
+  }
+
   ApiClient({FlutterSecureStorage? storage});
   Dio? _dio;
   String? _token;

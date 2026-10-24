@@ -247,14 +247,29 @@ class _ProductScreenState extends ConsumerState<ProductScreen>
       _statusKey = null;
     });
     BarcodeScanner? scanner;
+    String? capturedPath;
     try {
       final photo = await camera.takePicture();
+      capturedPath = photo.path;
       if (!mounted) {
         await _discard(photo.path);
         return;
       }
-      final file = XFile(photo.path);
-      final bytes = await file.readAsBytes();
+      var results = <Barcode>[];
+      if (!kIsWeb) {
+        scanner = BarcodeScanner(
+          formats: [
+            BarcodeFormat.ean13,
+            BarcodeFormat.ean8,
+            BarcodeFormat.upca,
+            BarcodeFormat.upce,
+          ],
+        );
+        results = await scanner.processImage(
+          InputImage.fromFilePath(photo.path),
+        );
+      }
+      final bytes = await consumeTempPhoto(photo.path);
       if (!mounted) {
         await _discard(photo.path);
         return;
@@ -286,19 +301,6 @@ class _ProductScreenState extends ConsumerState<ProductScreen>
         setState(() => _statusKey = 'rsNoBarcode');
         return;
       }
-      scanner = BarcodeScanner(
-        formats: [
-          BarcodeFormat.ean13,
-          BarcodeFormat.ean8,
-          BarcodeFormat.upca,
-          BarcodeFormat.upce,
-          BarcodeFormat.code128,
-          BarcodeFormat.qrCode,
-        ],
-      );
-      final results = await scanner.processImage(
-        InputImage.fromFilePath(photo.path),
-      );
       final codes =
           results
               .map((e) => e.rawValue)
@@ -335,6 +337,7 @@ class _ProductScreenState extends ConsumerState<ProductScreen>
       if (mounted) setState(() => _errorKey = 'rsBarcodeCaptureFailed');
     } finally {
       await scanner?.close();
+      if (capturedPath != null) await _discard(capturedPath);
       if (mounted) setState(() => _busy = false);
       if (mounted &&
           _resumeCamera &&
@@ -453,9 +456,12 @@ class _ProductScreenState extends ConsumerState<ProductScreen>
     try {
       final app = ref.read(appControllerProvider);
       final identity = app.identityGeneration;
-      final result = await app.api.get(
+      final result = await app.repository.get(
         '/products/lookup',
-        query: {'barcode': barcode},
+        query: {
+          'barcode': barcode,
+          if (app.isStandalone) 'store_id': app.store?['id'],
+        },
       );
       if (!mounted ||
           identity != app.identityGeneration ||
@@ -479,7 +485,10 @@ class _ProductScreenState extends ConsumerState<ProductScreen>
                     ? knownId
                     : null;
           }
-          _lookupSource = result['source']?.toString() ?? _lookupSource;
+          _lookupSource =
+              product['source']?.toString() ??
+              result['source']?.toString() ??
+              _lookupSource;
           _statusKey = 'rsLookupFound';
         });
       } else {
@@ -645,7 +654,7 @@ class _ProductScreenState extends ConsumerState<ProductScreen>
         'source': _lookupSource ?? 'manual',
       };
       if (_productId == null) {
-        final response = await app.api.post(
+        final response = await app.repository.post(
           '/stores/${Uri.encodeComponent(storeId)}/products',
           product,
         );
@@ -655,7 +664,7 @@ class _ProductScreenState extends ConsumerState<ProductScreen>
         _productId = id;
         _boundBarcode = _barcode.text.trim();
       } else {
-        await app.api.patch(
+        await app.repository.patch(
           '/products/${Uri.encodeComponent(_productId!)}',
           product,
         );
@@ -663,7 +672,7 @@ class _ProductScreenState extends ConsumerState<ProductScreen>
       if (!mounted || identity != app.identityGeneration) return;
       final item = {'row': row, 'slot': slot, 'quantity': quantity};
       if (_itemId == null) {
-        final response = await app.api.post(
+        final response = await app.repository.post(
           '/shelves/${Uri.encodeComponent(widget.shelfId)}/items',
           {'product_id': _productId, ...item},
         );
@@ -672,7 +681,10 @@ class _ProductScreenState extends ConsumerState<ProductScreen>
         if (id == null) throw StateError('missing_item_id');
         _itemId = id;
       } else {
-        await app.api.patch('/items/${Uri.encodeComponent(_itemId!)}', item);
+        await app.repository.patch(
+          '/items/${Uri.encodeComponent(_itemId!)}',
+          item,
+        );
       }
       if (!mounted || identity != app.identityGeneration) return;
       await app.refresh();
@@ -815,6 +827,8 @@ class _ProductScreenState extends ConsumerState<ProductScreen>
                     ),
                     const SizedBox(height: Tokens.md),
                   ],
+                  if (_lookupSource == 'open_food_facts')
+                    Text(tr(context, 'rsCatalogAttribution')),
                   TextFormField(
                     controller: _barcode,
                     autocorrect: false,

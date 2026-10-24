@@ -113,7 +113,7 @@
   "rsCategory": "Category",
   "rsNetWeight": "Net weight and unit",
   "rsPrice": "Unit price",
-  "rsUnknownPrice": "Optional. Leave blank if the price is unknown.",
+  "rsUnknownPrice": "Unknown until you enter a verified price. Leave blank if unavailable.",
   "rsInvalidPrice": "Enter a nonnegative price using your locale's decimal separator and the currency's supported precision.",
   "rsVegetarian": "Vegetarian status",
   "rsChoice_unknown": "Unknown",
@@ -121,7 +121,7 @@
   "rsChoice_no": "No",
   "rsNoRegulatoryClaim": "Database details are unverified. No food-safety or regulatory certification is inferred.",
   "rsNutrition": "Nutrition facts",
-  "rsUnknownNutrition": "No nutrition information is available. Add only information you can verify on the package, including units and reference quantity.",
+  "rsUnknownNutrition": "Unknown. Add only nutrition information you can verify on the package, including units and reference quantity.",
   "rsAddNutrient": "Add nutrition detail",
   "rsNutrientName": "Nutrient and reference quantity",
   "rsNutrientValue": "Value and unit",
@@ -129,7 +129,7 @@
   "rsIngredientsAllergens": "Ingredients and allergens",
   "rsIngredients": "Ingredients",
   "rsAllergens": "Allergens",
-  "rsUnknownAllergens": "Blank means unknown, not allergen-free. Verify the package.",
+  "rsUnknownAllergens": "Unknown when blank. Verify allergens on the package.",
   "rsManufacturerShelfLife": "Manufacturer and shelf life",
   "rsManufacturer": "Manufacturer",
   "rsShelfLife": "Shelf life",
@@ -189,5 +189,6 @@
   "today": "Today",
   "sevenDays": "7 Days",
   "thirtyDays": "30 Days",
-  "custom": "Custom"
+  "custom": "Custom",
+  "rsCatalogAttribution": "Product data: Open Food Facts (openfoodfacts.org, Open Database License). Verify the package before use."
 }

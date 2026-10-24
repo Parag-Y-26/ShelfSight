@@ -101,7 +101,7 @@ class _StoreSetupScreenState extends ConsumerState<StoreSetupScreen> {
     final identity = app.identityGeneration;
     try {
       if (_createdStoreId == null) {
-        final response = await app.api.post('/stores', {
+        final response = await app.repository.post('/stores', {
           'name': _name.text.trim(),
           'type_id': _type,
           'goal_id': _goal,

@@ -50,6 +50,8 @@ void main() {
     await _pumpAuthScreen(tester);
 
     final signUp = find.text('Sign up');
+    await tester.ensureVisible(signUp);
+    await tester.pumpAndSettle();
     await tester.tap(signUp);
     await tester.pumpAndSettle();
 

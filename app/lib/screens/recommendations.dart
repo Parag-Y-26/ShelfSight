@@ -15,6 +15,31 @@ class RecommendationsScreen extends ConsumerStatefulWidget {
 }
 
 class _RecommendationsScreenState extends ConsumerState<RecommendationsScreen> {
+  @override
+  void initState() {
+    super.initState();
+    final app = ref.read(appControllerProvider);
+    final storeId = app.store?['id']?.toString(),
+        generation = app.identityGeneration;
+    app
+        .latestLocalDecision()
+        .then((plan) {
+          if (mounted &&
+              !_busy &&
+              _plan == null &&
+              app.store?['id'] == storeId &&
+              app.identityGeneration == generation &&
+              plan != null) {
+            setState(() {
+              _plan = plan;
+              _planStoreId = storeId;
+              _planGeneration = generation;
+            });
+          }
+        })
+        .catchError((Object _) {});
+  }
+
   bool _busy = false;
   AutonomousActionPlan? _plan;
   String? _planStoreId;

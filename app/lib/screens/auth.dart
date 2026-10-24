@@ -168,7 +168,32 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                   ).textTheme.titleMedium?.copyWith(color: Tokens.muted),
                 ),
                 const SizedBox(height: Tokens.xl),
-                if (!controller.supabaseConfigured)
+                if (controller.supportsStandalone) ...[
+                  InfoCard(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Text(
+                          tr(context, 'localModeTitle'),
+                          style: Theme.of(context).textTheme.titleLarge,
+                        ),
+                        Text(tr(context, 'localModeHelp')),
+                        const SizedBox(height: Tokens.sm),
+                        BrandButton(
+                          label: tr(context, 'localModeStart'),
+                          icon: Icons.phone_android,
+                          onPressed:
+                              _working
+                                  ? null
+                                  : () => _action(controller.enterStandalone),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+                if (controller.supportsStandalone) const AiKeysPanel(),
+                if (!controller.supabaseConfigured &&
+                    !controller.supportsStandalone)
                   InfoCard(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -199,228 +224,235 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                       ],
                     ),
                   ),
-                InfoCard(
-                  child: Form(
-                    key: _form,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Text(
-                          tr(
-                            context,
-                            recovery
-                                ? 'updatePassword'
-                                : (_register ? 'createAccount' : 'welcomeBack'),
+                if (controller.supabaseConfigured ||
+                    !controller.supportsStandalone)
+                  InfoCard(
+                    child: Form(
+                      key: _form,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Text(
+                            tr(
+                              context,
+                              recovery
+                                  ? 'updatePassword'
+                                  : (_register
+                                      ? 'createAccount'
+                                      : 'welcomeBack'),
+                            ),
+                            textAlign: TextAlign.center,
+                            style: Theme.of(context).textTheme.headlineMedium
+                                ?.copyWith(fontWeight: FontWeight.w800),
                           ),
-                          textAlign: TextAlign.center,
-                          style: Theme.of(context).textTheme.headlineMedium
-                              ?.copyWith(fontWeight: FontWeight.w800),
-                        ),
-                        const SizedBox(height: Tokens.sm),
-                        Text(
-                          tr(
-                            context,
-                            recovery
-                                ? 'chooseNewPassword'
-                                : (_register
-                                    ? 'accountSubtitle'
-                                    : 'loginSubtitle'),
+                          const SizedBox(height: Tokens.sm),
+                          Text(
+                            tr(
+                              context,
+                              recovery
+                                  ? 'chooseNewPassword'
+                                  : (_register
+                                      ? 'accountSubtitle'
+                                      : 'loginSubtitle'),
+                            ),
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(color: Tokens.muted),
                           ),
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(color: Tokens.muted),
-                        ),
-                        const SizedBox(height: Tokens.lg),
-                        if (_register && !recovery) ...[
+                          const SizedBox(height: Tokens.lg),
+                          if (_register && !recovery) ...[
+                            TextFormField(
+                              controller: _name,
+                              textCapitalization: TextCapitalization.words,
+                              autofillHints: const [AutofillHints.name],
+                              enabled: enabled,
+                              decoration: InputDecoration(
+                                labelText: tr(context, 'yourName'),
+                                prefixIcon: const Icon(Icons.person_outline),
+                              ),
+                              validator:
+                                  (v) =>
+                                      v == null || v.trim().isEmpty
+                                          ? tr(context, 'requiredField')
+                                          : null,
+                            ),
+                            const SizedBox(height: Tokens.md),
+                          ],
                           TextFormField(
-                            controller: _name,
-                            textCapitalization: TextCapitalization.words,
-                            autofillHints: const [AutofillHints.name],
+                            controller: _email,
+                            keyboardType: TextInputType.emailAddress,
+                            autofillHints: const [AutofillHints.email],
                             enabled: enabled,
                             decoration: InputDecoration(
-                              labelText: tr(context, 'yourName'),
-                              prefixIcon: const Icon(Icons.person_outline),
+                              labelText: tr(context, 'email'),
+                              prefixIcon: const Icon(Icons.mail_outline),
                             ),
                             validator:
                                 (v) =>
-                                    v == null || v.trim().isEmpty
-                                        ? tr(context, 'requiredField')
+                                    recovery
+                                        ? null
+                                        : v == null ||
+                                            !RegExp(
+                                              r'^[^\s@]+@[^\s@]+\.[^\s@]+$',
+                                            ).hasMatch(v.trim())
+                                        ? tr(context, 'invalidEmail')
                                         : null,
                           ),
                           const SizedBox(height: Tokens.md),
-                        ],
-                        TextFormField(
-                          controller: _email,
-                          keyboardType: TextInputType.emailAddress,
-                          autofillHints: const [AutofillHints.email],
-                          enabled: enabled,
-                          decoration: InputDecoration(
-                            labelText: tr(context, 'email'),
-                            prefixIcon: const Icon(Icons.mail_outline),
-                          ),
-                          validator:
-                              (v) =>
-                                  recovery
-                                      ? null
-                                      : v == null ||
-                                          !RegExp(
-                                            r'^[^\s@]+@[^\s@]+\.[^\s@]+$',
-                                          ).hasMatch(v.trim())
-                                      ? tr(context, 'invalidEmail')
-                                      : null,
-                        ),
-                        const SizedBox(height: Tokens.md),
-                        TextFormField(
-                          controller: _password,
-                          obscureText: !_showPassword,
-                          autofillHints: [
-                            _register || recovery
-                                ? AutofillHints.newPassword
-                                : AutofillHints.password,
-                          ],
-                          enabled: enabled,
-                          decoration: InputDecoration(
-                            labelText: tr(
-                              context,
-                              recovery || _register
-                                  ? 'newPassword'
-                                  : 'password',
-                            ),
-                            prefixIcon: const Icon(Icons.lock_outline),
-                            suffixIcon: IconButton(
-                              tooltip: tr(
+                          TextFormField(
+                            controller: _password,
+                            obscureText: !_showPassword,
+                            autofillHints: [
+                              _register || recovery
+                                  ? AutofillHints.newPassword
+                                  : AutofillHints.password,
+                            ],
+                            enabled: enabled,
+                            decoration: InputDecoration(
+                              labelText: tr(
                                 context,
-                                _showPassword ? 'hidePassword' : 'showPassword',
+                                recovery || _register
+                                    ? 'newPassword'
+                                    : 'password',
                               ),
-                              onPressed:
-                                  () => setState(
-                                    () => _showPassword = !_showPassword,
-                                  ),
-                              icon: Icon(
-                                _showPassword
-                                    ? Icons.visibility_off_outlined
-                                    : Icons.visibility_outlined,
+                              prefixIcon: const Icon(Icons.lock_outline),
+                              suffixIcon: IconButton(
+                                tooltip: tr(
+                                  context,
+                                  _showPassword
+                                      ? 'hidePassword'
+                                      : 'showPassword',
+                                ),
+                                onPressed:
+                                    () => setState(
+                                      () => _showPassword = !_showPassword,
+                                    ),
+                                icon: Icon(
+                                  _showPassword
+                                      ? Icons.visibility_off_outlined
+                                      : Icons.visibility_outlined,
+                                ),
                               ),
                             ),
+                            validator:
+                                (v) =>
+                                    v == null || v.isEmpty
+                                        ? tr(context, 'requiredField')
+                                        : (_register || recovery) &&
+                                            v.length < 6
+                                        ? tr(context, 'weakPassword')
+                                        : null,
                           ),
-                          validator:
-                              (v) =>
-                                  v == null || v.isEmpty
-                                      ? tr(context, 'requiredField')
-                                      : (_register || recovery) && v.length < 6
-                                      ? tr(context, 'weakPassword')
-                                      : null,
-                        ),
-                        if (!_register && !recovery)
-                          Align(
-                            alignment: Alignment.centerRight,
-                            child: TextButton(
-                              onPressed:
-                                  enabled
-                                      ? () {
-                                        if (_email.text.trim().isEmpty) {
-                                          setState(
-                                            () => _error = 'enterEmailFirst',
-                                          );
-                                          return;
-                                        }
-                                        _action(
-                                          () => controller.resetPassword(
-                                            _email.text,
-                                          ),
-                                          reset: true,
-                                        );
-                                      }
-                                      : null,
-                              child: Text(tr(context, 'forgotPassword')),
-                            ),
-                          ),
-                        if (_error != null)
-                          ErrorNotice(message: tr(context, _error!)),
-                        if (_notice != null)
-                          Padding(
-                            padding: const EdgeInsets.all(Tokens.md),
-                            child: Text(
-                              tr(context, _notice!),
-                              style: const TextStyle(color: Tokens.teal),
-                            ),
-                          ),
-                        const SizedBox(height: Tokens.md),
-                        BrandButton(
-                          label: tr(
-                            context,
-                            recovery
-                                ? 'updatePassword'
-                                : (_register ? 'createAccount' : 'login'),
-                          ),
-                          icon:
-                              _working
-                                  ? Icons.hourglass_top
-                                  : Icons.arrow_forward,
-                          onPressed:
-                              enabled
-                                  ? () {
-                                    if (_form.currentState?.validate() !=
-                                        true) {
-                                      return;
-                                    }
-                                    _action(() async {
-                                      if (recovery) {
-                                        await controller.updatePassword(
-                                          _password.text,
-                                        );
-                                      } else if (_register) {
-                                        final signedIn = await controller
-                                            .register(
-                                              _name.text,
-                                              _email.text,
-                                              _password.text,
+                          if (!_register && !recovery)
+                            Align(
+                              alignment: Alignment.centerRight,
+                              child: TextButton(
+                                onPressed:
+                                    enabled
+                                        ? () {
+                                          if (_email.text.trim().isEmpty) {
+                                            setState(
+                                              () => _error = 'enterEmailFirst',
                                             );
-                                        if (mounted && !signedIn) {
-                                          setState(
-                                            () => _notice = 'checkEmail',
+                                            return;
+                                          }
+                                          _action(
+                                            () => controller.resetPassword(
+                                              _email.text,
+                                            ),
+                                            reset: true,
                                           );
                                         }
-                                      } else {
-                                        await controller.login(
-                                          _email.text,
-                                          _password.text,
-                                        );
-                                      }
-                                    });
-                                  }
-                                  : null,
-                        ),
-                        if (!_register && !recovery) ...[
+                                        : null,
+                                child: Text(tr(context, 'forgotPassword')),
+                              ),
+                            ),
+                          if (_error != null)
+                            ErrorNotice(message: tr(context, _error!)),
+                          if (_notice != null)
+                            Padding(
+                              padding: const EdgeInsets.all(Tokens.md),
+                              child: Text(
+                                tr(context, _notice!),
+                                style: const TextStyle(color: Tokens.teal),
+                              ),
+                            ),
                           const SizedBox(height: Tokens.md),
                           BrandButton(
-                            label: tr(context, 'signUp'),
-                            icon: Icons.person_add_outlined,
+                            label: tr(
+                              context,
+                              recovery
+                                  ? 'updatePassword'
+                                  : (_register ? 'createAccount' : 'login'),
+                            ),
+                            icon:
+                                _working
+                                    ? Icons.hourglass_top
+                                    : Icons.arrow_forward,
+                            onPressed:
+                                enabled
+                                    ? () {
+                                      if (_form.currentState?.validate() !=
+                                          true) {
+                                        return;
+                                      }
+                                      _action(() async {
+                                        if (recovery) {
+                                          await controller.updatePassword(
+                                            _password.text,
+                                          );
+                                        } else if (_register) {
+                                          final signedIn = await controller
+                                              .register(
+                                                _name.text,
+                                                _email.text,
+                                                _password.text,
+                                              );
+                                          if (mounted && !signedIn) {
+                                            setState(
+                                              () => _notice = 'checkEmail',
+                                            );
+                                          }
+                                        } else {
+                                          await controller.login(
+                                            _email.text,
+                                            _password.text,
+                                          );
+                                        }
+                                      });
+                                    }
+                                    : null,
+                          ),
+                          if (!_register && !recovery) ...[
+                            const SizedBox(height: Tokens.md),
+                            BrandButton(
+                              label: tr(context, 'signUp'),
+                              icon: Icons.person_add_outlined,
+                              outlined: true,
+                              onPressed: enabled ? _showRegistration : null,
+                            ),
+                          ],
+                          if (_demoCredentialsConfigured && !recovery) ...[
+                            const SizedBox(height: Tokens.sm),
+                            TextButton.icon(
+                              onPressed: enabled ? _useDemoCredentials : null,
+                              icon: const Icon(Icons.science_outlined),
+                              label: Text(tr(context, 'useDemoAccount')),
+                            ),
+                          ],
+                          const SizedBox(height: Tokens.md),
+                          BrandButton(
+                            label: tr(context, 'continueGoogle'),
+                            icon: Icons.account_circle_outlined,
                             outlined: true,
-                            onPressed: enabled ? _showRegistration : null,
+                            onPressed:
+                                enabled && !recovery
+                                    ? () => _action(controller.googleLogin)
+                                    : null,
                           ),
                         ],
-                        if (_demoCredentialsConfigured && !recovery) ...[
-                          const SizedBox(height: Tokens.sm),
-                          TextButton.icon(
-                            onPressed: enabled ? _useDemoCredentials : null,
-                            icon: const Icon(Icons.science_outlined),
-                            label: Text(tr(context, 'useDemoAccount')),
-                          ),
-                        ],
-                        const SizedBox(height: Tokens.md),
-                        BrandButton(
-                          label: tr(context, 'continueGoogle'),
-                          icon: Icons.account_circle_outlined,
-                          outlined: true,
-                          onPressed:
-                              enabled && !recovery
-                                  ? () => _action(controller.googleLogin)
-                                  : null,
-                        ),
-                      ],
+                      ),
                     ),
                   ),
-                ),
                 if (_register && !recovery)
                   TextButton(
                     onPressed:
@@ -433,7 +465,7 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                             }),
                     child: Text(tr(context, 'alreadyAccount')),
                   ),
-                const AiKeysPanel(),
+                if (!controller.supportsStandalone) const AiKeysPanel(),
                 Text(
                   tr(context, 'privacySummary'),
                   textAlign: TextAlign.center,

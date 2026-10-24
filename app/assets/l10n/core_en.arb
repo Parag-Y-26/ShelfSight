@@ -166,7 +166,7 @@
   "option_gemini": "Gemini",
   "option_nvidia_nim": "NVIDIA NIM",
   "option_openrouter": "OpenRouter",
-  "standaloneUnavailable": "Mobile mode supports direct cloud vision and text using your saved keys. Offline person detection and standalone store management are not implemented.",
+  "standaloneUnavailable": "These shelf settings request standalone mobile monitoring. Switch the device to Standalone Mobile Mode in Settings, or change the shelves to remote server mode.",
   "settingsAfterMonitoring": "Stop monitoring before changing settings. Each session uses a fixed configuration snapshot.",
   "runLabeledReplay": "Run Labeled Evaluation Replay",
   "replayHelp": "Evaluation only. Paste your labeled frames as a JSON array with at_ms and detections (bbox and confidence). Labels are never saved as visits, stock or sales.",
@@ -210,5 +210,16 @@
   "threshold_decision_min_visits": "Minimum verified visits for a placement review",
   "threshold_decision_min_coverage_sec": "Minimum verified coverage for a placement review (seconds)",
   "threshold_decision_probability_threshold": "Minimum evidence-gated alert value (0-1)",
-  "aiDecisionScopeLimited": "This bounded review assessed only part of the store. The returned shelf assessments define its scope."
+  "aiDecisionScopeLimited": "This bounded review assessed only part of the store. The returned shelf assessments define its scope.",
+  "localModeTitle": "Standalone Mobile Mode",
+  "localModeStart": "Start Standalone Mobile Mode",
+  "localModeHelp": "Keep stores, products, stock, visits and recommendations on this device. Save at least one AI key below to begin. A server and cloud account are optional. Camera tracking works offline; AI and Open Food Facts need internet.",
+  "localNeedsKey": "Save a Gemini, NVIDIA NIM or OpenRouter API key, then start Standalone Mobile Mode. A live connection test is optional.",
+  "localStorageFailed": "Could not open on-device storage. Restart the app and check available device storage.",
+  "localModeUnsupported": "Standalone SQLite and ML Kit camera tracking require Android or iOS. Use remote server mode on Web.",
+  "localMonitorPrivacy": "Camera frames stay on this device. Bundled ML Kit object detection and pose confirmation follow the prominent person; crowded or obscured bodies may be missed. Visits require visible feet in calibrated zones. No AI API tokens are used. Processing time is measured on this device.",
+  "aiUseDirectScan": "Use direct AI scan with a configured provider in standalone mode.",
+  "monitorLocalOnly": "Local monitoring writes directly to SQLite and does not open a server connection.",
+  "localModeMismatch": "These shelf settings request remote monitoring. Change them to standalone mobile or connect a server in Settings.",
+  "localUseRemote": "Use Remote Server Mode"
 }

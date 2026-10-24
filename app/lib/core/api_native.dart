@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart';
@@ -408,6 +409,17 @@ class ApiClient {
           )).data,
     );
   }
+
+  Future<dynamic> uploadBytes(String path, Uint8List bytes) => _guard(
+    () async =>
+        (await _ready(path).post<dynamic>(
+          path,
+          data: FormData.fromMap({
+            'file': MultipartFile.fromBytes(bytes, filename: 'capture.jpg'),
+          }),
+          options: _options,
+        )).data,
+  );
 
   Future<String> text(String path, {Map<String, dynamic>? query}) async {
     final generation = _generation;

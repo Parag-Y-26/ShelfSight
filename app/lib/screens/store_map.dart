@@ -151,7 +151,7 @@ class _StoreMapScreenState extends ConsumerState<StoreMapScreen> {
       _errorKey = null;
     });
     try {
-      await app.api.patch('/shelves/$_shelfId', {
+      await app.repository.patch('/shelves/$_shelfId', {
         ...geometry.toJson(),
         'floor_id': _floorId,
         'name': _name.text.trim(),
@@ -197,8 +197,8 @@ class _StoreMapScreenState extends ConsumerState<StoreMapScreen> {
     });
     try {
       final data = creating
-          ? await app.api.post('/stores/$storeId/floors', result)
-          : await app.api.patch('/floors/${floor!['id']}', result);
+          ? await app.repository.post('/stores/$storeId/floors', result)
+          : await app.repository.patch('/floors/${floor!['id']}', result);
       await app.refresh();
       if (!mounted) return;
       if (data is Map && data['id'] is String) _floorId = data['id'] as String;

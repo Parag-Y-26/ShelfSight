@@ -473,6 +473,8 @@
     },
     "disclaimer": "Pickup, put-back, and sales conversion are not measured in this build; decisions are grounded strictly in verified dwell, visit, and recorded stock ledger events.",
     "evidence_provenance": [
+      "live_camera",
+      "user_recorded_inventory",
       "user_input",
       "local_camera_observation",
       "recovered_local_camera_observation",

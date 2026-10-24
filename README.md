@@ -268,13 +268,16 @@ The server prints its HTTPS address and creates `runtime/pairing.json` with the 
 
 > **💡 Tip:** Phone and PC must be on the same private Wi-Fi. If Windows Firewall blocks the connection, allow TCP port 8443 on the **Private** profile only.
 
-### Optional: Direct AI Mode (No Server Needed)
+### Standalone Mobile Mode (Android/iOS default)
 
-You can skip the server entirely! On the app:
+Stores, stock, calibration, visits and recommendations can live entirely on your phone:
 
-1. Open **Settings → Direct AI Connections**
-2. Enter your Gemini, NVIDIA NIM, or OpenRouter API key
-3. Use **Scan using saved API keys** to identify shelves directly from your phone
+1. Enter a Gemini, NVIDIA NIM or OpenRouter API key on onboarding.
+2. Choose **Start Standalone Mobile Mode**. No server URL or cloud account is required.
+3. Create your store, count stock, place shelves and calibrate camera zones. On-device ML Kit monitoring uses no AI tokens; local SQLite retains records after restart.
+4. Use internet for direct AI scans and Open Food Facts lookup; local operations work offline.
+
+ML Kit pose confirmation follows the prominent person and may miss crowds or obscured feet. Sub-100 ms inference and physical-device airplane-mode acceptance remain unverified. See [standalone architecture, limits and device checks](docs/STANDALONE_MOBILE.md). Optional remote mode retains separate server data and does not automatically synchronize the local ledger.
 
 ---
 

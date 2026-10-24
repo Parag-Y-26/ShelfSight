@@ -30,7 +30,7 @@ final _routerProvider = Provider<GoRouter>((ref) {
       final path = state.matchedLocation;
       if (['/settings', '/ai-scan', '/ai-parse'].contains(path)) return null;
       if (!controller.authenticated) return path == '/login' ? null : '/login';
-      if (!controller.paired) return path == '/connect' ? null : '/connect';
+      if (!controller.ready) return path == '/connect' ? null : '/connect';
       if (path == '/login' || path == '/connect') return '/home';
       return null;
     },
