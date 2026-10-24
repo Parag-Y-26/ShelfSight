@@ -167,17 +167,17 @@ sequenceDiagram
 ```mermaid
 flowchart LR
     Request["🔀 AI Request"] --> Mode{Mode?}
-    
+
     Mode -- "Auto" --> Health["Check Provider Health"]
     Mode -- "Explicit" --> Direct["Use Selected Provider"]
-    
+
     Health --> Best["Pick Best Available"]
     Best --> Try["Try Provider"]
     Try -- "✅ Success" --> Return["Return Result"]
     Try -- "❌ Fail" --> Next["Try Next Provider"]
     Next --> Try
     Next -- "All Failed" --> Fallback["Deterministic Fallback"]
-    
+
     Direct --> Return
     Fallback --> Return
 ```
