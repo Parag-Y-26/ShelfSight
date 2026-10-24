@@ -33,16 +33,7 @@ String friendlyError(Object error) {
   return 'unexpectedError';
 }
 
-/// No roots are trusted here: every HTTPS and WSS connection must present the
-/// exact leaf certificate whose SHA-256 was obtained out-of-band from the laptop.
-bool certificateMatches(X509Certificate certificate, String fingerprint) =>
-    sha256.convert(certificate.der).toString() ==
-    normalizeFingerprint(fingerprint);
-
-String normalizeFingerprint(String value) =>
-    value.replaceAll(':', '').replaceAll(RegExp(r'\s'), '').toLowerCase();
-
-Uri pairingUri(String value) {
+Uri apiUri(String value) {
   final uri = Uri.tryParse(value.trim());
   if (uri == null ||
       uri.scheme != 'https' ||
@@ -56,10 +47,24 @@ Uri pairingUri(String value) {
   return uri.replace(path: '');
 }
 
+String normalizeFingerprint(String value) =>
+    value.replaceAll(':', '').replaceAll(RegExp(r'\s'), '').toLowerCase();
+
+bool certificateMatches(X509Certificate certificate, String fingerprint) =>
+    sha256.convert(certificate.der).toString() ==
+    normalizeFingerprint(fingerprint);
+
 class ApiClient {
-  ApiClient({FlutterSecureStorage? storage})
-    : _storage = storage ?? const FlutterSecureStorage();
+  ApiClient({
+    FlutterSecureStorage? storage,
+    Dio Function(BaseOptions)? createDio,
+  }) : _storage = storage ?? const FlutterSecureStorage(),
+       _createDio = createDio;
   final FlutterSecureStorage _storage;
+  final Dio Function(BaseOptions)? _createDio;
+  String? _cloudAddress;
+  String? _fingerprint;
+  bool _localMode = false;
   Dio? _dio;
   int _generation = 0;
   Future<T> _guard<T>(Future<T> Function() action) async {
@@ -71,7 +76,6 @@ class ApiClient {
 
   String? _uid;
   String? _token;
-  String? _fingerprint;
   Uri? _base;
   DateTime? _expiry;
   final Set<WebSocket> _sockets = {};
@@ -81,57 +85,68 @@ class ApiClient {
       _token != null &&
       _base != null &&
       (_expiry?.isAfter(DateTime.now().toUtc()) ?? false);
-  String? get serverAddress => _base?.toString();
+  String? get serverAddress => _cloudAddress ?? _base?.toString();
+  bool get localMode => _localMode;
+  bool get hasApiAddress => serverAddress?.isNotEmpty == true;
   String get serverIdentity =>
-      '${_base?.toString() ?? ''}|${_fingerprint ?? ''}';
+      _fingerprint == null
+          ? _base?.toString() ?? ''
+          : '${_base?.toString()}|$_fingerprint';
   DateTime? get expiresAt => _expiry;
 
   HttpClient _httpClient() {
-    final client = HttpClient(
-      context: SecurityContext(withTrustedRoots: false),
-    );
+    final client =
+        _localMode
+            ? HttpClient(context: SecurityContext(withTrustedRoots: false))
+            : HttpClient();
     client.connectionTimeout = const Duration(seconds: 10);
-    client.badCertificateCallback =
-        (certificate, host, port) =>
-            _base != null &&
-            host == _base!.host &&
-            port == _base!.port &&
-            _fingerprint != null &&
-            certificateMatches(certificate, _fingerprint!);
+    if (_localMode) {
+      client.badCertificateCallback =
+          (certificate, host, port) =>
+              _base != null &&
+              _fingerprint != null &&
+              host == _base!.host &&
+              port == _base!.port &&
+              certificateMatches(certificate, _fingerprint!);
+    }
     return client;
   }
 
-  void _configure(Uri base, String fingerprint) {
+  void _configure(Uri base, {String? fingerprint}) {
     final configuredGeneration = _generation;
     _dio?.close(force: true);
     _base = base;
     _fingerprint = fingerprint;
-    _dio = Dio(
-      BaseOptions(
-        baseUrl: '${base.toString()}/v1',
-        connectTimeout: const Duration(seconds: 10),
-        receiveTimeout: const Duration(seconds: 40),
-        sendTimeout: const Duration(seconds: 15),
-        followRedirects: false,
-        headers: {HttpHeaders.acceptHeader: 'application/json'},
-      ),
+    _localMode = fingerprint != null;
+    final options = BaseOptions(
+      baseUrl: '${base.toString()}/v1',
+      connectTimeout: const Duration(seconds: 10),
+      receiveTimeout: const Duration(seconds: 40),
+      sendTimeout: const Duration(seconds: 15),
+      followRedirects: false,
+      headers: {HttpHeaders.acceptHeader: 'application/json'},
     );
-    _dio!.httpClientAdapter = IOHttpClientAdapter(
-      createHttpClient: _httpClient,
-      validateCertificate:
-          (certificate, host, port) =>
-              certificate != null &&
-              host == base.host &&
-              port == base.port &&
-              certificateMatches(certificate, fingerprint),
-    );
+    _dio = _createDio?.call(options) ?? Dio(options);
+    if (_createDio == null) {
+      _dio!.httpClientAdapter = IOHttpClientAdapter(
+        createHttpClient: _httpClient,
+        validateCertificate:
+            fingerprint == null
+                ? null
+                : (certificate, host, port) =>
+                    certificate != null &&
+                    host == base.host &&
+                    port == base.port &&
+                    certificateMatches(certificate, fingerprint),
+      );
+    }
     _dio!.interceptors.add(
       InterceptorsWrapper(
         onError: (error, handler) {
           if (configuredGeneration == _generation &&
               error.response?.statusCode == 401 &&
               _token != null) {
-            _token = null;
+            unawaited(clear().catchError((Object _) {}));
             onUnauthorized?.call();
           }
           handler.next(error);
@@ -146,33 +161,123 @@ class ApiClient {
     if (expected != _generation) return;
     final generation = _generation;
     _uid = uid;
-    final value = await _storage.read(key: 'pairing_$uid');
+    _localMode = await _storage.read(key: 'api_mode') == 'local';
+    _cloudAddress =
+        await _storage.read(key: 'api_address') ??
+        const String.fromEnvironment('SHELFSIGHT_API_URL');
+    if (generation != _generation || !hasApiAddress) return;
+    if (_localMode) {
+      final value = await _storage.read(key: 'pairing_$uid');
+      if (generation != _generation || value == null) return;
+      try {
+        final data = jsonDecode(value) as Map<String, dynamic>;
+        final fingerprint = normalizeFingerprint(data['fingerprint'] as String);
+        if (!RegExp(r'^[a-f0-9]{64}$').hasMatch(fingerprint) ||
+            data['address'] != _cloudAddress ||
+            data['owner_uid'] != uid ||
+            data['session_token'] is! String ||
+            (data['session_token'] as String).isEmpty) {
+          throw const FormatException();
+        }
+        _configure(apiUri(_cloudAddress!), fingerprint: fingerprint);
+        _expiry = DateTime.parse(data['expires_at'] as String).toUtc();
+        if (!_expiry!.isAfter(DateTime.now().toUtc())) {
+          await _storage.delete(key: 'pairing_$uid');
+          return;
+        }
+        _token = data['session_token'] as String;
+      } catch (_) {
+        _token = null;
+        _fingerprint = null;
+        await _storage.delete(key: 'pairing_$uid');
+      }
+      return;
+    }
+    _configure(apiUri(_cloudAddress!));
+    final value = await _storage.read(key: 'cloud_session_$uid');
     if (generation != _generation) return;
     if (value == null) return;
     try {
       final data = jsonDecode(value) as Map<String, dynamic>;
-      final fingerprint = normalizeFingerprint(data['fingerprint'] as String);
-      if (!RegExp(r'^[a-f0-9]{64}$').hasMatch(fingerprint)) {
+      if (data['address'] != _cloudAddress ||
+          data['owner_uid'] != uid ||
+          data['session_token'] is! String ||
+          (data['session_token'] as String).isEmpty) {
         throw const FormatException();
       }
       _expiry = DateTime.parse(data['expires_at'] as String).toUtc();
       if (!_expiry!.isAfter(DateTime.now().toUtc())) {
-        await _storage.delete(key: 'pairing_$uid');
+        await _storage.delete(key: 'cloud_session_$uid');
         return;
       }
-      if (data['owner_uid'] != uid) throw const FormatException();
-      _configure(pairingUri(data['address'] as String), fingerprint);
       _token = data['session_token'] as String;
     } catch (_) {
-      await _storage.delete(key: 'pairing_$uid');
+      _token = null;
+      await _storage.delete(key: 'cloud_session_$uid');
     }
+  }
+
+  Future<void> setApiAddress(String address) async {
+    final base = apiUri(address);
+    try {
+      await revoke();
+    } catch (_) {
+      // Local credentials are cleared even if the previous API is offline.
+    }
+    _cloudAddress = base.toString();
+    _localMode = false;
+    await _storage.write(key: 'api_address', value: _cloudAddress);
+    await _storage.write(key: 'api_mode', value: 'cloud');
   }
 
   Future<void> connectCloud({
     required String idToken,
     required String uid,
   }) async {
-    throw const ApiFailure('invalidPairing');
+    if (!hasApiAddress) throw const ApiFailure('apiAddressRequired');
+    final base = apiUri(_cloudAddress!);
+    final expected = _generation + 1;
+    await clear();
+    if (expected != _generation) throw const ApiFailure('sessionExpired');
+    final generation = _generation;
+    _uid = uid;
+    _configure(base);
+    final response = await _dio!.post<Map<String, dynamic>>(
+      '/cloud-session',
+      data: {'device_name': 'ShelfSight Android'},
+      options: Options(
+        headers: {HttpHeaders.authorizationHeader: 'Bearer $idToken'},
+      ),
+    );
+    if (generation != _generation) throw const ApiFailure('sessionExpired');
+    final data = response.data;
+    final expiry =
+        DateTime.tryParse(data?['expires_at']?.toString() ?? '')?.toUtc();
+    if (data == null ||
+        data['owner_uid'] != uid ||
+        data['session_token'] is! String ||
+        (data['session_token'] as String).isEmpty ||
+        expiry == null ||
+        !expiry.isAfter(DateTime.now().toUtc())) {
+      await clear();
+      throw const ApiFailure('invalidResponse');
+    }
+    _token = data['session_token'] as String;
+    _expiry = expiry;
+    await _storage.write(key: 'api_mode', value: 'cloud');
+    await _storage.write(
+      key: 'cloud_session_$uid',
+      value: jsonEncode({
+        'address': base.toString(),
+        'owner_uid': uid,
+        'session_token': _token,
+        'expires_at': expiry.toIso8601String(),
+      }),
+    );
+    if (generation != _generation) {
+      await _storage.delete(key: 'cloud_session_$uid');
+      throw const ApiFailure('sessionExpired');
+    }
   }
 
   Future<void> pair({
@@ -183,48 +288,72 @@ class ApiClient {
     required String uid,
     required String deviceName,
   }) async {
-    final base = pairingUri(address);
+    final base = apiUri(address);
     final pin = normalizeFingerprint(fingerprint);
-    if (!RegExp(r'^[a-f0-9]{64}$').hasMatch(pin) || secret.trim().isEmpty) {
+    if (!RegExp(r'^[a-f0-9]{64}$').hasMatch(pin) ||
+        secret.trim().isEmpty ||
+        deviceName.trim().isEmpty) {
       throw const ApiFailure('invalidPairing');
     }
     final expected = _generation + 1;
     await clear();
-    if (expected != _generation) throw const ApiFailure("sessionExpired");
+    if (expected != _generation) throw const ApiFailure('sessionExpired');
     final generation = _generation;
     _uid = uid;
-    _configure(base, pin);
-    final response = await _dio!.post<Map<String, dynamic>>(
-      '/pair',
-      data: {'pairing_secret': secret.trim(), 'device_name': deviceName.trim()},
-      options: Options(
-        headers: {HttpHeaders.authorizationHeader: 'Bearer $idToken'},
-      ),
-    );
-    if (generation != _generation) throw const ApiFailure("sessionExpired");
-    final data = response.data;
-    if (data == null ||
-        data['owner_uid'] != uid ||
-        data['session_token'] is! String) {
-      await clear();
-      throw const ApiFailure('invalidPairing');
+    _cloudAddress = base.toString();
+    _localMode = true;
+    await _storage.write(key: 'api_address', value: _cloudAddress);
+    await _storage.write(key: 'api_mode', value: 'local');
+    _configure(base, fingerprint: pin);
+    try {
+      final response = await _dio!.post<Map<String, dynamic>>(
+        '/pair',
+        data: {
+          'pairing_secret': secret.trim(),
+          'device_name': deviceName.trim(),
+        },
+        options: Options(
+          headers: {HttpHeaders.authorizationHeader: 'Bearer $idToken'},
+        ),
+      );
+      if (generation != _generation) {
+        throw const ApiFailure('sessionExpired');
+      }
+      final data = response.data;
+      final expiry =
+          DateTime.tryParse(data?['expires_at']?.toString() ?? '')?.toUtc();
+      if (data == null ||
+          data['owner_uid'] != uid ||
+          data['session_token'] is! String ||
+          (data['session_token'] as String).isEmpty ||
+          expiry == null ||
+          !expiry.isAfter(DateTime.now().toUtc())) {
+        throw const ApiFailure('invalidPairing');
+      }
+      _token = data['session_token'] as String;
+      _expiry = expiry;
+      await _storage.write(
+        key: 'pairing_$uid',
+        value: jsonEncode({
+          'address': base.toString(),
+          'fingerprint': pin,
+          'owner_uid': uid,
+          'session_token': _token,
+          'expires_at': expiry.toIso8601String(),
+        }),
+      );
+      if (generation != _generation) {
+        await _storage.delete(key: 'pairing_$uid');
+        throw const ApiFailure('sessionExpired');
+      }
+    } catch (_) {
+      if (generation == _generation) {
+        await clear();
+        _cloudAddress = base.toString();
+        _localMode = true;
+      }
+      rethrow;
     }
-    _expiry = DateTime.tryParse(data['expires_at']?.toString() ?? '')?.toUtc();
-    if (_expiry == null || !_expiry!.isAfter(DateTime.now().toUtc())) {
-      await clear();
-      throw const ApiFailure('invalidPairing');
-    }
-    _token = data['session_token'] as String;
-    await _storage.write(
-      key: 'pairing_$uid',
-      value: jsonEncode({
-        'address': base.toString(),
-        'fingerprint': pin,
-        'session_token': _token,
-        'expires_at': _expiry!.toIso8601String(),
-        'owner_uid': uid,
-      }),
-    );
   }
 
   Dio _ready(String path) {
@@ -234,7 +363,8 @@ class ApiClient {
         uri == null ||
         uri.hasScheme ||
         uri.host.isNotEmpty ||
-        path.contains('..')) {
+        path.contains('..') ||
+        path.contains('\\')) {
       throw const ApiFailure('invalidInput');
     }
     if (!paired || _dio == null) throw const ApiFailure('sessionExpired');
@@ -355,6 +485,9 @@ class ApiClient {
     for (final socket in sockets) {
       await socket.close(WebSocketStatus.goingAway);
     }
-    if (erase && uid != null) await _storage.delete(key: 'pairing_$uid');
+    if (erase && uid != null) {
+      await _storage.delete(key: 'cloud_session_$uid');
+      await _storage.delete(key: 'pairing_$uid');
+    }
   }
 }

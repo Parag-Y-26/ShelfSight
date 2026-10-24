@@ -601,15 +601,30 @@ class _ShelfResultsScreenState extends ConsumerState<ShelfResultsScreen> {
       (e) => e['id']?.toString() == _shelfId,
     );
     final hasNext = currentIndex >= 0 && currentIndex + 1 < app.shelves.length;
+    final canPopNavigator = Navigator.of(context).canPop();
+    final router = GoRouter.maybeOf(context);
+    final currentPath = router?.routeInformationProvider.value.uri.path;
     return PopScope(
-      canPop: !_hasChanges || _saving || _allowPop,
+      canPop: canPopNavigator && (!_hasChanges || _saving || _allowPop),
       onPopInvokedWithResult: (didPop, result) async {
         if (didPop || _saving) return;
+        if (!_hasChanges) {
+          if (!Navigator.of(context).canPop() &&
+              router != null &&
+              currentPath != '/home') {
+            router.go('/home');
+          }
+          return;
+        }
         if (await _discardChanges() && context.mounted) {
-          setState(() => _allowPop = true);
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) Navigator.of(context).pop();
-          });
+          if (Navigator.of(context).canPop()) {
+            setState(() => _allowPop = true);
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) Navigator.of(context).pop();
+            });
+          } else {
+            router?.go('/home');
+          }
         }
       },
       child: PageScaffold(

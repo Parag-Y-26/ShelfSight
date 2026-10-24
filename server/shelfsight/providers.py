@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import logging
 import math
 import struct
 import threading
@@ -20,6 +21,8 @@ from fastapi import HTTPException
 from .config import BusinessConfig, Settings
 from .db import Database, utc_now
 from .schemas import ScanOutput
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -167,12 +170,14 @@ class MediaPipeDetector:
 
 
 class GeminiVisionModel:
+    source = "gemini"
+
     def __init__(self, settings: Settings, config: BusinessConfig):
         self.available = bool(settings.gemini_api_key.get_secret_value() and settings.gemini_model)
         self.reason = (
             "Gemini shelf scanning configured"
             if self.available
-            else "Configure Gemini credentials and model on the laptop; manual entry remains available"
+            else "Configure Gemini credentials and model on the server; manual entry remains available"
         )
         self.settings = settings
         self.timeout = config.data["limits"]["scan_timeout_seconds"]
@@ -218,7 +223,19 @@ class GeminiVisionModel:
             parsed = ScanOutput.model_validate_json(response.text or "")
         except Exception as exc:
             # Provider exceptions may contain URLs with credentials or raw model output.
-            raise HTTPException(502, "Shelf scan failed; retry or add products manually") from exc
+            status = getattr(exc, "code", None)
+            if not isinstance(status, int):
+                status = "unknown"
+            logger.warning(
+                "Gemini image identification failed (%s; status=%s)",
+                type(exc).__name__,
+                status,
+            )
+            raise HTTPException(
+                502,
+                "Vision provider failed. Check the server-side API key, model and settings. "
+                "Retry or add products manually.",
+            ) from exc
         finally:
             client.close()
         candidates = [item.model_dump() for item in parsed.candidates]

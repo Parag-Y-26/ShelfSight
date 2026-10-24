@@ -7,10 +7,6 @@
 !server/shelfsight/**
 !config/
 !config/defaults.json
-!app/
-!app/build/
-!app/build/web/
-!app/build/web/**
 !runtime/
 !runtime/models/
 !runtime/models/detector.tflite

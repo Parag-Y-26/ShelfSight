@@ -200,8 +200,8 @@ def main():
         f"Manual pairing details: {pairing_path} "
         f"(one use; expires in {config.data['limits']['pairing_ttl_seconds']} seconds)"
     )
-    if not settings.firebase_project_id:
-        print("Firebase project is not configured. Pairing will reject requests until configured.")
+    if not settings.supabase_url or not settings.supabase_publishable_key.get_secret_value():
+        print("Supabase Auth is not configured. Pairing will reject requests until configured.")
     if args.pairing_only:
         return
     uvicorn.run(

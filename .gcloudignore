@@ -1,0 +1,24 @@
+# Explicit upload allowlist; intentionally do not include .gitignore.
+# Only the API source, business configuration and detector model are uploaded.
+*
+!Dockerfile
+!.dockerignore
+!.gcloudignore
+!server/
+!server/pyproject.toml
+!server/uv.lock
+!server/shelfsight/
+!server/shelfsight/*.py
+!config/
+!config/defaults.json
+!runtime/
+!runtime/models/
+!runtime/models/detector.tflite
+**/__pycache__/**
+**/.env
+**/.env.*
+**/*.pem
+**/*.key
+**/*.jks
+**/*.keystore
+.git/**

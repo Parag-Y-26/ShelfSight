@@ -13,130 +13,145 @@ class DashboardScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final controller = ref.watch(appControllerProvider);
     final store = controller.store;
-    return Scaffold(
-      body: SafeArea(
-        child: RefreshIndicator(
-          onRefresh: () async {
-            try {
-              await controller.refresh();
-            } catch (_) {}
-          },
-          child: ListView(
-            padding: const EdgeInsets.all(Tokens.lg),
-            children: [
-              Row(
-                children: [
-                  Image.asset(
-                    'assets/logo.jpeg',
-                    width: Tokens.logoSmall,
-                    height: Tokens.logoSmall,
-                    semanticLabel: tr(context, 'brand'),
-                  ),
-                  const SizedBox(width: Tokens.sm),
-                  Expanded(
-                    child: Text(
-                      tr(context, 'brand'),
-                      style: Theme.of(context).textTheme.headlineSmall
-                          ?.copyWith(fontWeight: FontWeight.w900),
-                    ),
-                  ),
-                  IconButton(
-                    tooltip: tr(context, 'settings'),
-                    onPressed: () => context.push('/settings'),
-                    icon: const Icon(Icons.settings_outlined),
-                  ),
-                ],
-              ),
-              const SizedBox(height: Tokens.xl),
-              Text(
-                tr(context, 'greeting', {'name': controller.displayName}),
-                style: Theme.of(context).textTheme.headlineLarge?.copyWith(
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-              const SizedBox(height: Tokens.sm),
-              Text(
-                store?['name']?.toString() ?? tr(context, 'noStore'),
-                style: Theme.of(
-                  context,
-                ).textTheme.headlineSmall?.copyWith(color: Tokens.muted),
-              ),
-              const SizedBox(height: Tokens.lg),
-              if (controller.isOffline)
-                InfoCard(
-                  child: Row(
-                    children: [
-                      const Icon(
-                        Icons.cloud_off_outlined,
-                        color: Tokens.warning,
-                      ),
-                      const SizedBox(width: Tokens.sm),
-                      Expanded(
-                        child: Text(
-                          tr(context, 'cachedView', {
-                            'time':
-                                controller.cacheTimestamp
-                                    ?.toLocal()
-                                    .toString() ??
-                                tr(context, 'unknown'),
-                          }),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              if (controller.error != null)
-                ErrorNotice(message: tr(context, controller.error!)),
-              if (store == null)
-                InfoCard(
-                  child: Column(
-                    children: [
-                      EmptyState(
-                        message: tr(context, 'setupFirst'),
-                        icon: Icons.storefront_outlined,
-                      ),
-                      BrandButton(
-                        label: tr(context, 'setupStore'),
-                        icon: Icons.add_business_outlined,
-                        onPressed: () => context.push('/setup'),
-                      ),
-                    ],
-                  ),
-                ),
-              _DashboardCard(
-                title: tr(context, 'monitoring'),
-                subtitle: tr(context, 'monitoringSubtitle'),
-                icon: Icons.center_focus_strong,
-                gradient: true,
-                live: controller.monitoringActive,
-                onTap: store == null ? null : () => context.push('/monitor'),
-              ),
-              const SizedBox(height: Tokens.lg),
-              _DashboardCard(
-                title: tr(context, 'analytics'),
-                subtitle: tr(context, 'analyticsSubtitle'),
-                icon: Icons.insights,
-                gradient: false,
-                onTap: store == null ? null : () => context.push('/analytics'),
-              ),
-              const SizedBox(height: Tokens.lg),
-              if (store != null)
+    return AppBackGuard(
+      child: Scaffold(
+        body: SafeArea(
+          child: RefreshIndicator(
+            onRefresh: () async {
+              try {
+                await controller.refresh();
+              } catch (_) {}
+            },
+            child: ListView(
+              padding: const EdgeInsets.all(Tokens.lg),
+              children: [
                 Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Flexible(
+                    Image.asset(
+                      'assets/logo.jpeg',
+                      width: Tokens.logoSmall,
+                      height: Tokens.logoSmall,
+                      semanticLabel: tr(context, 'brand'),
+                    ),
+                    const SizedBox(width: Tokens.sm),
+                    Expanded(
                       child: Text(
-                        store['name']?.toString() ?? '',
-                        style: const TextStyle(color: Tokens.muted),
+                        tr(context, 'brand'),
+                        style: Theme.of(context).textTheme.headlineSmall
+                            ?.copyWith(fontWeight: FontWeight.w900),
                       ),
                     ),
-                    TextButton(
-                      onPressed: () => context.push('/map'),
-                      child: Text(tr(context, 'storeMap')),
+                    IconButton(
+                      tooltip: tr(context, 'settings'),
+                      onPressed: () => context.push('/settings'),
+                      icon: const Icon(Icons.settings_outlined),
                     ),
                   ],
                 ),
-            ],
+                const SizedBox(height: Tokens.xl),
+                Text(
+                  tr(context, 'greeting', {'name': controller.displayName}),
+                  style: Theme.of(context).textTheme.headlineLarge?.copyWith(
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: Tokens.sm),
+                Text(
+                  store?['name']?.toString() ?? tr(context, 'noStore'),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.headlineSmall?.copyWith(color: Tokens.muted),
+                ),
+                const SizedBox(height: Tokens.lg),
+                if (controller.isOffline)
+                  InfoCard(
+                    child: Row(
+                      children: [
+                        const Icon(
+                          Icons.cloud_off_outlined,
+                          color: Tokens.warning,
+                        ),
+                        const SizedBox(width: Tokens.sm),
+                        Expanded(
+                          child: Text(
+                            tr(context, 'cachedView', {
+                              'time':
+                                  controller.cacheTimestamp
+                                      ?.toLocal()
+                                      .toString() ??
+                                  tr(context, 'unknown'),
+                            }),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                if (controller.error != null)
+                  ErrorNotice(message: tr(context, controller.error!)),
+                if (store == null)
+                  InfoCard(
+                    child: Column(
+                      children: [
+                        EmptyState(
+                          message: tr(context, 'setupFirst'),
+                          icon: Icons.storefront_outlined,
+                        ),
+                        BrandButton(
+                          label: tr(context, 'setupStore'),
+                          icon: Icons.add_business_outlined,
+                          onPressed: () => context.push('/setup'),
+                        ),
+                      ],
+                    ),
+                  ),
+                if (store != null && controller.shelves.isNotEmpty) ...[
+                  BrandButton(
+                    label: tr(context, 'manageShelves'),
+                    icon: Icons.shelves,
+                    outlined: true,
+                    onPressed:
+                        () => context.push(
+                          '/shelf/${Uri.encodeComponent(controller.shelves.first['id'].toString())}',
+                        ),
+                  ),
+                  const SizedBox(height: Tokens.lg),
+                ],
+                _DashboardCard(
+                  title: tr(context, 'monitoring'),
+                  subtitle: tr(context, 'monitoringSubtitle'),
+                  icon: Icons.center_focus_strong,
+                  gradient: true,
+                  live: controller.monitoringActive,
+                  onTap: store == null ? null : () => context.push('/monitor'),
+                ),
+                const SizedBox(height: Tokens.lg),
+                _DashboardCard(
+                  title: tr(context, 'analytics'),
+                  subtitle: tr(context, 'analyticsSubtitle'),
+                  icon: Icons.insights,
+                  gradient: false,
+                  onTap:
+                      store == null ? null : () => context.push('/analytics'),
+                ),
+                const SizedBox(height: Tokens.lg),
+                if (store != null)
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Flexible(
+                        child: Text(
+                          store['name']?.toString() ?? '',
+                          style: const TextStyle(color: Tokens.muted),
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: () => context.push('/map'),
+                        child: Text(tr(context, 'storeMap')),
+                      ),
+                    ],
+                  ),
+              ],
+            ),
           ),
         ),
       ),

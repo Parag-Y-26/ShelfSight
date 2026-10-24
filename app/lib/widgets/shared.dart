@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 
 import '../core/theme.dart';
 
@@ -37,6 +38,32 @@ class PageScaffold extends StatelessWidget {
               ),
             ),
   );
+}
+
+class AppBackGuard extends StatelessWidget {
+  const AppBackGuard({super.key, required this.child});
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final navigator = Navigator.of(context);
+    final canPop = navigator.canPop();
+    final router = GoRouter.maybeOf(context);
+    final currentPath = router?.routeInformationProvider.value.uri.path;
+    return PopScope<void>(
+      canPop: canPop,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop || canPop) return;
+        if (router != null &&
+            currentPath != '/home' &&
+            currentPath != '/login' &&
+            currentPath != '/connect') {
+          router.go('/home');
+        }
+      },
+      child: child,
+    );
+  }
 }
 
 class BrandButton extends StatelessWidget {

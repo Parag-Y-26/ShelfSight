@@ -17,6 +17,14 @@ subprojects {
 }
 subprojects {
     project.evaluationDependsOn(":app")
+
+    if (name == "camera_android_camerax") {
+        plugins.withId("com.android.library") {
+            // CameraX publishes this annotated type as runtime-only; javac also
+            // needs it while reading SurfaceRequest's type annotations.
+            dependencies.add("compileOnly", "androidx.concurrent:concurrent-futures:1.1.0")
+        }
+    }
 }
 
 tasks.register<Delete>("clean") {

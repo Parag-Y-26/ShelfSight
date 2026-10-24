@@ -8,7 +8,6 @@ COPY server/pyproject.toml server/uv.lock ./
 COPY server/shelfsight ./shelfsight
 RUN uv sync --frozen --no-dev
 COPY config/defaults.json /workspace/config/defaults.json
-COPY app/build/web /workspace/app/build/web
 COPY runtime/models/detector.tflite /workspace/models/detector.tflite
 RUN useradd --create-home --uid 10001 shelfsight
 USER shelfsight

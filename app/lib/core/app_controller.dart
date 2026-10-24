@@ -1,8 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_core/firebase_core.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
@@ -19,7 +18,7 @@ final appControllerProvider = ChangeNotifierProvider<AppController>(
 );
 
 class AppController extends ChangeNotifier {
-  AppController({ApiClient? api, OwnerCache? cache, FirebaseAuth? auth})
+  AppController({ApiClient? api, OwnerCache? cache, SupabaseClient? auth})
     : api = api ?? ApiClient(),
       cache = cache ?? OwnerCache(),
       _auth = auth {
@@ -39,26 +38,28 @@ class AppController extends ChangeNotifier {
     this.items = const [],
     this.calibrations = const [],
     bool signedIn = true,
+    this.supabaseConfigured = false,
   }) : cache = cache ?? OwnerCache(),
        _authenticated = signedIn,
-       initialized = true,
-       firebaseConfigured = false {
+       initialized = true {
     AppStrings.setResourceOverlay(config['strings']);
   }
 
   final ApiClient api;
   final OwnerCache cache;
-  FirebaseAuth? _auth;
-  StreamSubscription<User?>? _authSubscription;
+  SupabaseClient? _auth;
+  StreamSubscription<AuthState>? _authSubscription;
   Future<void>? _googleInitialization;
   Timer? _expiryTimer;
   String? _identityUid;
   int _generation = 0;
+  int _selectionGeneration = 0;
   int get identityGeneration => _generation;
   bool _current(int generation) => generation == _generation;
   bool _authenticated = false;
   bool initialized = false;
-  bool firebaseConfigured = false;
+  bool supabaseConfigured = false;
+  bool passwordRecoveryPending = false;
   bool busy = false;
   bool isOffline = false;
   bool monitoringActive = false;
@@ -109,10 +110,17 @@ class AppController extends ChangeNotifier {
     notifyListeners();
   }
 
-  String get displayName =>
-      _auth?.currentUser?.displayName?.trim().isNotEmpty == true
-          ? _auth!.currentUser!.displayName!
-          : (_auth?.currentUser?.email?.split('@').first ?? '');
+  String get displayName {
+    final user = _auth?.auth.currentUser;
+    final metadataName =
+        user?.userMetadata?['display_name'] ??
+        user?.userMetadata?['full_name'] ??
+        user?.userMetadata?['name'];
+    if (metadataName is String && metadataName.trim().isNotEmpty) {
+      return metadataName.trim();
+    }
+    return user?.email?.split('@').first ?? '';
+  }
 
   Future<void> _bootstrap() async {
     try {
@@ -120,39 +128,29 @@ class AppController extends ChangeNotifier {
         jsonDecode(await rootBundle.loadString('assets/defaults.json')) as Map,
       );
       _setConfig(Map<String, dynamic>.from(_defaultConfig));
-      const apiKey = String.fromEnvironment('FIREBASE_API_KEY');
-      const appId = String.fromEnvironment('FIREBASE_APP_ID');
-      const projectId = String.fromEnvironment('FIREBASE_PROJECT_ID');
-      const senderId = String.fromEnvironment('FIREBASE_MESSAGING_SENDER_ID');
-      firebaseConfigured = [
-        apiKey,
-        appId,
-        projectId,
-        senderId,
-      ].every((v) => v.isNotEmpty);
-      if (firebaseConfigured) {
-        if (Firebase.apps.isEmpty) {
-          await Firebase.initializeApp(
-            options: const FirebaseOptions(
-              apiKey: apiKey,
-              appId: appId,
-              projectId: projectId,
-              messagingSenderId: senderId,
-              authDomain: String.fromEnvironment('FIREBASE_AUTH_DOMAIN'),
-              storageBucket: String.fromEnvironment('FIREBASE_STORAGE_BUCKET'),
-            ),
-          );
-        }
-        _auth ??= FirebaseAuth.instance;
-        await _userChanged(_auth!.currentUser);
-        _authSubscription = _auth!.authStateChanges().listen((user) {
-          // Initial identity was restored above; only handle actual changes.
-          if (user?.uid != _identityUid) unawaited(_userChanged(user));
+      const supabaseUrl = String.fromEnvironment('SUPABASE_URL');
+      const publishableKey = String.fromEnvironment('SUPABASE_PUBLISHABLE_KEY');
+      supabaseConfigured = supabaseUrl.isNotEmpty && publishableKey.isNotEmpty;
+      if (supabaseConfigured) {
+        await Supabase.initialize(
+          url: supabaseUrl,
+          publishableKey: publishableKey,
+        );
+        _auth ??= Supabase.instance.client;
+        _authSubscription = _auth!.auth.onAuthStateChange.listen((state) {
+          if (state.event == AuthChangeEvent.passwordRecovery) {
+            passwordRecoveryPending = true;
+            unawaited(_userChanged(null));
+            return;
+          }
+          final user = state.session?.user;
+          if (user?.id != _identityUid) unawaited(_userChanged(user));
         });
+        await _userChanged(_auth!.auth.currentUser);
       }
     } catch (_) {
       bootstrapError = 'configurationFailed';
-      firebaseConfigured = false;
+      supabaseConfigured = false;
     } finally {
       initialized = true;
       notifyListeners();
@@ -160,9 +158,13 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> _userChanged(User? user) async {
+    if (passwordRecoveryPending && user != null) {
+      await _userChanged(null);
+      return;
+    }
     final generation = ++_generation;
     _expiryTimer?.cancel();
-    _identityUid = user?.uid;
+    _identityUid = user?.id;
     localeTag = null;
     _setConfig(Map<String, dynamic>.from(_defaultConfig));
     _authenticated = user != null;
@@ -172,18 +174,18 @@ class AppController extends ChangeNotifier {
       await cache.close();
     } else {
       try {
-        await api.restore(user.uid);
+        await api.restore(user.id);
         if (!_current(generation)) return;
-        if (kIsWeb) {
-          final token = await user.getIdToken();
+        if (!api.paired && api.hasApiAddress && !api.localMode) {
+          final token = _auth!.auth.currentSession?.accessToken;
           if (!_current(generation)) return;
           if (token == null) throw const ApiFailure('sessionExpired');
-          await api.connectCloud(idToken: token, uid: user.uid);
+          await api.connectCloud(idToken: token, uid: user.id);
           if (!_current(generation)) return;
         }
         if (api.paired) {
           _armExpiry();
-          await cache.open(user.uid, server: api.serverIdentity);
+          await cache.open(user.id, server: api.serverIdentity);
           if (!_current(generation)) return;
           await _restoreCache();
           if (!_current(generation)) return;
@@ -193,41 +195,52 @@ class AppController extends ChangeNotifier {
             /* cached state remains visible */
           }
         }
-      } catch (_) {
+      } catch (e) {
         if (!_current(generation)) return;
         // A corrupt local cache or unavailable keystore must not impersonate a
-        // successful pairing. The user can establish a new session explicitly.
+        // successful API connection. The user can establish a fresh session.
         await api.clear();
         await cache.close();
         _clearBusinessState();
-        error = 'localStorageUnavailable';
+        error = friendlyError(e);
       }
     }
     notifyListeners();
   }
 
+  static const _authRedirect = 'com.shelfsight.app://auth-callback';
+
   Future<void> login(String email, String password) async {
-    await _auth!.signInWithEmailAndPassword(
+    await _auth!.auth.signInWithPassword(
       email: email.trim(),
       password: password,
     );
   }
 
-  Future<void> register(String name, String email, String password) async {
-    final result = await _auth!.createUserWithEmailAndPassword(
+  Future<bool> register(String name, String email, String password) async {
+    final result = await _auth!.auth.signUp(
       email: email.trim(),
       password: password,
+      data: {'display_name': name.trim()},
+      emailRedirectTo: _authRedirect,
     );
-    await result.user?.updateDisplayName(name.trim());
-    notifyListeners();
+    return result.session != null;
   }
 
-  Future<void> resetPassword(String email) =>
-      _auth!.sendPasswordResetEmail(email: email.trim());
+  Future<void> resetPassword(String email) => _auth!.auth.resetPasswordForEmail(
+    email.trim(),
+    redirectTo: _authRedirect,
+  );
+
+  Future<void> updatePassword(String password) async {
+    await _auth!.auth.updateUser(UserAttributes(password: password));
+    passwordRecoveryPending = false;
+    await _userChanged(_auth!.auth.currentUser);
+  }
+
   Future<void> googleLogin() async {
     if (kIsWeb) {
-      await _auth!.signInWithPopup(GoogleAuthProvider());
-      return;
+      throw const ApiFailure('googleUnsupported');
     }
     final signIn = GoogleSignIn.instance;
     const webClientId = String.fromEnvironment('GOOGLE_WEB_CLIENT_ID');
@@ -241,13 +254,15 @@ class AppController extends ChangeNotifier {
     final account = await signIn.authenticate();
     final token = account.authentication.idToken;
     if (token == null) throw const ApiFailure('googleUnavailable');
-    await _auth!.signInWithCredential(
-      GoogleAuthProvider.credential(idToken: token),
+    await _auth!.auth.signInWithIdToken(
+      provider: OAuthProvider.google,
+      idToken: token,
     );
   }
 
-  Future<void> reconnectCloud() async {
-    await _userChanged(_auth?.currentUser);
+  Future<void> reconnectCloud({String? address}) async {
+    if (address != null) await api.setApiAddress(address);
+    await _userChanged(_auth?.auth.currentUser);
   }
 
   Future<void> pair({
@@ -257,9 +272,8 @@ class AppController extends ChangeNotifier {
     required String deviceName,
   }) async {
     final generation = ++_generation;
-    final user = _auth?.currentUser;
-    final idToken = await user?.getIdToken();
-    if (!_current(generation)) return;
+    final user = _auth?.auth.currentUser;
+    final idToken = _auth?.auth.currentSession?.accessToken;
     if (user == null || idToken == null) {
       throw const ApiFailure('sessionExpired');
     }
@@ -268,15 +282,11 @@ class AppController extends ChangeNotifier {
       fingerprint: fingerprint,
       secret: secret,
       idToken: idToken,
-      uid: user.uid,
+      uid: user.id,
       deviceName: deviceName,
     );
     if (!_current(generation)) return;
-    _armExpiry();
-    await cache.open(user.uid, server: api.serverIdentity);
-    if (!_current(generation)) return;
-    _clearBusinessState();
-    await refresh();
+    await _userChanged(user);
   }
 
   static List<Map<String, dynamic>> _list(dynamic value) =>
@@ -297,8 +307,9 @@ class AppController extends ChangeNotifier {
 
   Future<void> selectStore(String id) async {
     final generation = _generation;
+    final selection = ++_selectionGeneration;
     final data = await api.get('/stores/$id/snapshot');
-    if (!_current(generation)) return;
+    if (!_current(generation) || selection != _selectionGeneration) return;
     if (data is! Map || data['store'] is! Map) {
       throw const ApiFailure('invalidResponse');
     }
@@ -437,6 +448,7 @@ class AppController extends ChangeNotifier {
   }
 
   void _clearBusinessState({bool clearStores = true}) {
+    ++_selectionGeneration;
     store = null;
     if (clearStores) stores = [];
     floors = [];
@@ -463,7 +475,7 @@ class AppController extends ChangeNotifier {
     _clearBusinessState();
     localeTag = null;
     _setConfig(Map<String, dynamic>.from(_defaultConfig));
-    await _auth?.signOut();
+    await _auth?.auth.signOut();
     _authenticated = false;
     try {
       if (_googleInitialization != null) await GoogleSignIn.instance.signOut();

@@ -34,14 +34,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   Future<void> _threshold(String key, num inherited, dynamic current) async {
     final value = await showDialog<num>(
       context: context,
-      builder: (_) =>
-          _ThresholdDialog(settingKey: key, value: current ?? inherited),
+      builder:
+          (_) => _ThresholdDialog(settingKey: key, value: current ?? inherited),
     );
     if (value == null || !mounted) return;
     final c = ref.read(appControllerProvider);
-    final target = _shelfId == null
-        ? c.store
-        : c.shelves.where((s) => s['id'] == _shelfId).firstOrNull;
+    final target =
+        _shelfId == null
+            ? c.store
+            : c.shelves.where((s) => s['id'] == _shelfId).firstOrNull;
     final settings = Map<String, dynamic>.from(
       target?['settings'] is Map ? target!['settings'] as Map : {},
     );
@@ -57,9 +58,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   Future<void> _resetOverrides() async {
     final c = ref.read(appControllerProvider);
-    final target = _shelfId == null
-        ? c.store
-        : c.shelves.where((s) => s['id'] == _shelfId).firstOrNull;
+    final target =
+        _shelfId == null
+            ? c.store
+            : c.shelves.where((s) => s['id'] == _shelfId).firstOrNull;
     final settings = Map<String, dynamic>.from(
       target?['settings'] is Map ? target!['settings'] as Map : {},
     );
@@ -81,23 +83,24 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   Future<void> _delete() async {
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(tr(context, 'deleteStore')),
-        content: Text(tr(context, 'deleteStoreWarning')),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: Text(tr(context, 'cancel')),
+      builder:
+          (dialogContext) => AlertDialog(
+            title: Text(tr(context, 'deleteStore')),
+            content: Text(tr(context, 'deleteStoreWarning')),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: Text(tr(context, 'cancel')),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                child: Text(
+                  tr(context, 'delete'),
+                  style: const TextStyle(color: Tokens.danger),
+                ),
+              ),
+            ],
           ),
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: Text(
-              tr(context, 'delete'),
-              style: const TextStyle(color: Tokens.danger),
-            ),
-          ),
-        ],
-      ),
     );
     if (confirmed != true || !mounted) return;
     await _run(() async {
@@ -109,22 +112,17 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     final c = ref.watch(appControllerProvider);
-    final defaults = c.config['thresholds'] is Map
-        ? c.config['thresholds'] as Map
-        : {};
-    final storeSettings = c.store?['settings'] is Map
-        ? c.store!['settings'] as Map
-        : {};
+    final defaults =
+        c.config['thresholds'] is Map ? c.config['thresholds'] as Map : {};
+    final storeSettings =
+        c.store?['settings'] is Map ? c.store!['settings'] as Map : {};
     final shelf = c.shelves.where((s) => s['id'] == _shelfId).firstOrNull;
-    final shelfSettings = shelf?['settings'] is Map
-        ? shelf!['settings'] as Map
-        : {};
-    final providers = c.config['providers'] is Map
-        ? c.config['providers'] as Map
-        : {};
-    final currencies = c.config['currencies'] is List
-        ? c.config['currencies'] as List
-        : [];
+    final shelfSettings =
+        shelf?['settings'] is Map ? shelf!['settings'] as Map : {};
+    final providers =
+        c.config['providers'] is Map ? c.config['providers'] as Map : {};
+    final currencies =
+        c.config['currencies'] is List ? c.config['currencies'] as List : [];
     final units = c.config['units'] is List ? c.config['units'] as List : [];
     return PageScaffold(
       title: tr(context, 'settings'),
@@ -163,7 +161,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     ),
                     BrandButton(
                       label: tr(context, 'changeLaptop'),
-                      icon: Icons.phonelink_setup,
+                      icon: Icons.cloud_sync_outlined,
                       outlined: true,
                       onPressed: _busy ? null : () => _run(c.disconnect),
                     ),
@@ -181,22 +179,24 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     decoration: InputDecoration(
                       labelText: tr(context, 'activeStore'),
                     ),
-                    items: c.stores
-                        .map(
-                          (s) => DropdownMenuItem(
-                            value: s['id'].toString(),
-                            child: Text(s['name']?.toString() ?? ''),
-                          ),
-                        )
-                        .toList(),
-                    onChanged: _busy
-                        ? null
-                        : (id) {
-                            if (id != null) {
-                              setState(() => _shelfId = null);
-                              _run(() => c.selectStore(id));
-                            }
-                          },
+                    items:
+                        c.stores
+                            .map(
+                              (s) => DropdownMenuItem(
+                                value: s['id'].toString(),
+                                child: Text(s['name']?.toString() ?? ''),
+                              ),
+                            )
+                            .toList(),
+                    onChanged:
+                        _busy
+                            ? null
+                            : (id) {
+                              if (id != null) {
+                                setState(() => _shelfId = null);
+                                _run(() => c.selectStore(id));
+                              }
+                            },
                   ),
                   const SizedBox(height: Tokens.md),
                   BrandButton(
@@ -224,19 +224,21 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     decoration: InputDecoration(
                       labelText: tr(context, 'displayLocale'),
                     ),
-                    items: c.supportedLocaleTags
-                        .map(
-                          (tag) => DropdownMenuItem(
-                            value: tag,
-                            child: Text(tr(context, 'locale_$tag')),
-                          ),
-                        )
-                        .toList(),
-                    onChanged: _busy
-                        ? null
-                        : (tag) {
-                            if (tag != null) _run(() => c.setLocaleTag(tag));
-                          },
+                    items:
+                        c.supportedLocaleTags
+                            .map(
+                              (tag) => DropdownMenuItem(
+                                value: tag,
+                                child: Text(tr(context, 'locale_$tag')),
+                              ),
+                            )
+                            .toList(),
+                    onChanged:
+                        _busy
+                            ? null
+                            : (tag) {
+                              if (tag != null) _run(() => c.setLocaleTag(tag));
+                            },
                   ),
                   const SizedBox(height: Tokens.md),
                   for (final field in [
@@ -244,33 +246,36 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     ('unit', units),
                   ]) ...[
                     DropdownButtonFormField<String>(
-                      initialValue: field.$2.contains(c.store?[field.$1])
-                          ? c.store![field.$1].toString()
-                          : null,
+                      initialValue:
+                          field.$2.contains(c.store?[field.$1])
+                              ? c.store![field.$1].toString()
+                              : null,
                       decoration: InputDecoration(
                         labelText: tr(context, field.$1),
                       ),
-                      items: field.$2
-                          .map(
-                            (v) => DropdownMenuItem(
-                              value: v.toString(),
-                              child: Text(v.toString()),
-                            ),
-                          )
-                          .toList(),
-                      onChanged: _busy
-                          ? null
-                          : (value) {
-                              if (value != null) {
-                                _run(() async {
-                                  await c.api.patch(
-                                    '/stores/${c.store!['id']}',
-                                    {field.$1: value},
-                                  );
-                                  await c.refresh();
-                                });
-                              }
-                            },
+                      items:
+                          field.$2
+                              .map(
+                                (v) => DropdownMenuItem(
+                                  value: v.toString(),
+                                  child: Text(v.toString()),
+                                ),
+                              )
+                              .toList(),
+                      onChanged:
+                          _busy
+                              ? null
+                              : (value) {
+                                if (value != null) {
+                                  _run(() async {
+                                    await c.api.patch(
+                                      '/stores/${c.store!['id']}',
+                                      {field.$1: value},
+                                    );
+                                    await c.refresh();
+                                  });
+                                }
+                              },
                     ),
                     const SizedBox(height: Tokens.md),
                   ],
@@ -305,10 +310,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                         ),
                       ),
                     ],
-                    onChanged: _busy
-                        ? null
-                        : (id) =>
-                              setState(() => _shelfId = id == '' ? null : id),
+                    onChanged:
+                        _busy
+                            ? null
+                            : (id) =>
+                                setState(() => _shelfId = id == '' ? null : id),
                   ),
                   const SizedBox(height: Tokens.sm),
                   for (final entry in defaults.entries)
@@ -316,12 +322,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       Builder(
                         builder: (context) {
                           final key = entry.key.toString();
-                          final inherited = storeSettings[key] is num
-                              ? storeSettings[key] as num
-                              : entry.value as num;
-                          final current = _shelfId == null
-                              ? storeSettings[key]
-                              : shelfSettings[key];
+                          final inherited =
+                              storeSettings[key] is num
+                                  ? storeSettings[key] as num
+                                  : entry.value as num;
+                          final current =
+                              _shelfId == null
+                                  ? storeSettings[key]
+                                  : shelfSettings[key];
                           return ListTile(
                             contentPadding: EdgeInsets.zero,
                             title: Text(tr(context, 'threshold_$key')),
@@ -335,9 +343,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                               ),
                             ),
                             trailing: const Icon(Icons.edit_outlined),
-                            onTap: _busy
-                                ? null
-                                : () => _threshold(key, inherited, current),
+                            onTap:
+                                _busy
+                                    ? null
+                                    : () => _threshold(key, inherited, current),
                           );
                         },
                       ),
@@ -370,17 +379,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     subtitle: Text(
                       entry.value is Map
                           ? tr(
-                              context,
-                              (entry.value as Map)['available'] == true
-                                  ? 'providerAvailable'
-                                  : 'providerUnavailable',
-                              {
-                                'reason':
-                                    (entry.value as Map)['reason']
-                                        ?.toString() ??
-                                    '',
-                              },
-                            )
+                            context,
+                            (entry.value as Map)['available'] == true
+                                ? 'providerAvailable'
+                                : 'providerUnavailable',
+                            {
+                              'reason':
+                                  (entry.value as Map)['reason']?.toString() ??
+                                  '',
+                            },
+                          )
                           : entry.value.toString(),
                     ),
                   ),

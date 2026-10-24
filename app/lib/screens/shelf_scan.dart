@@ -199,8 +199,15 @@ class _ShelfScanScreenState extends ConsumerState<ShelfScanScreen>
                   ShelfResultsScreen(shelfId: shelfId, candidates: candidates),
         ),
       );
-    } catch (_) {
-      if (mounted) setState(() => _errorKey = 'rsScanFailed');
+    } catch (error) {
+      if (mounted) {
+        final message = friendlyError(error);
+        setState(
+          () =>
+              _errorKey =
+                  message == 'unexpectedError' ? 'rsScanFailed' : message,
+        );
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -227,154 +234,156 @@ class _ShelfScanScreenState extends ConsumerState<ShelfScanScreen>
             : matching.first['name']?.toString() ?? tr(context, 'rsShelfScan');
     final theme = Theme.of(context);
     final camera = _camera;
-    return PageScaffold(
-      title: shelfName,
-      actions: [
-        if (_photo != null)
-          IconButton(
-            onPressed: _busy ? null : _retake,
-            tooltip: tr(context, 'rsRetake'),
-            icon: const Icon(Icons.refresh),
-          ),
-      ],
-      bottom: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          BrandButton(
-            label: tr(
-              context,
-              _busy
-                  ? 'rsPleaseWait'
-                  : _photo == null
-                  ? 'rsCaptureShelf'
-                  : 'rsIdentifyProducts',
+    return AppBackGuard(
+      child: PageScaffold(
+        title: shelfName,
+        actions: [
+          if (_photo != null)
+            IconButton(
+              onPressed: _busy ? null : _retake,
+              tooltip: tr(context, 'rsRetake'),
+              icon: const Icon(Icons.refresh),
             ),
-            icon:
-                _photo == null
-                    ? Icons.camera_alt_outlined
-                    : Icons.auto_awesome_outlined,
-            onPressed:
-                _busy ||
-                        shelfId == null ||
-                        (_photo == null &&
-                            (camera == null || !camera.value.isInitialized))
-                    ? null
-                    : _photo == null
-                    ? _capture
-                    : _identify,
-          ),
-          const SizedBox(height: Tokens.sm),
-          TextButton(
-            onPressed: _busy || shelfId == null ? null : _manual,
-            child: Text(tr(context, 'rsEnterManually')),
-          ),
         ],
-      ),
-      child: ListView(
-        padding: const EdgeInsets.all(Tokens.md),
-        children: [
-          Text(
-            tr(context, 'rsScanHeading'),
-            style: theme.textTheme.headlineSmall,
-          ),
-          const SizedBox(height: Tokens.sm),
-          Text(
-            tr(context, 'rsScanGuidance'),
-            style: theme.textTheme.bodyMedium,
-          ),
-          const SizedBox(height: Tokens.lg),
-          if (shelfId == null) ...[
-            EmptyState(
-              message: tr(context, 'rsSetupBeforeScan'),
-              icon: Icons.storefront_outlined,
-            ),
+        bottom: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
             BrandButton(
-              label: tr(context, 'rsStoreSetup'),
-              onPressed: () => context.go('/setup'),
-            ),
-          ] else
-            ClipRRect(
-              borderRadius: BorderRadius.circular(Tokens.radius),
-              child: AspectRatio(
-                aspectRatio: 3 / 4,
-                child: ColoredBox(
-                  color: theme.colorScheme.surfaceContainerHighest,
-                  child: Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      if (_photo != null)
-                        FutureBuilder(
-                          future: XFile(_photo!).readAsBytes(),
-                          builder:
-                              (context, snapshot) =>
-                                  snapshot.hasData
-                                      ? Image.memory(
-                                        snapshot.data!,
-                                        fit: BoxFit.contain,
-                                      )
-                                      : const CircularProgressIndicator(),
-                        )
-                      else if (camera != null && camera.value.isInitialized)
-                        Center(
-                          child: AspectRatio(
-                            aspectRatio: camera.value.aspectRatio,
-                            child: CameraPreview(camera),
-                          ),
-                        )
-                      else
-                        Center(
-                          child:
-                              _initializing
-                                  ? const CircularProgressIndicator()
-                                  : Icon(
-                                    Icons.no_photography_outlined,
-                                    size: Tokens.xl * 2,
-                                  ),
-                        ),
-                      if (_busy)
-                        ColoredBox(
-                          color: theme.colorScheme.surface.withValues(
-                            alpha: 0.7,
-                          ),
-                          child: const Center(
-                            child: CircularProgressIndicator(),
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
+              label: tr(
+                context,
+                _busy
+                    ? 'rsPleaseWait'
+                    : _photo == null
+                    ? 'rsCaptureShelf'
+                    : 'rsIdentifyProducts',
               ),
+              icon:
+                  _photo == null
+                      ? Icons.camera_alt_outlined
+                      : Icons.auto_awesome_outlined,
+              onPressed:
+                  _busy ||
+                          shelfId == null ||
+                          (_photo == null &&
+                              (camera == null || !camera.value.isInitialized))
+                      ? null
+                      : _photo == null
+                      ? _capture
+                      : _identify,
             ),
-          const SizedBox(height: Tokens.md),
-          if (_errorKey != null) ...[
-            ErrorNotice(message: tr(context, _errorKey!)),
-            if (_photo == null)
-              TextButton.icon(
-                onPressed: _initializing ? null : _initializeCamera,
-                icon: const Icon(Icons.refresh),
-                label: Text(tr(context, 'rsRetryCamera')),
-              ),
+            const SizedBox(height: Tokens.sm),
+            TextButton(
+              onPressed: _busy || shelfId == null ? null : _manual,
+              child: Text(tr(context, 'rsEnterManually')),
+            ),
           ],
-          InfoCard(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Icon(
-                  Icons.privacy_tip_outlined,
-                  color: theme.colorScheme.primary,
-                ),
-                const SizedBox(width: Tokens.md),
-                Expanded(
-                  child: Text(
-                    tr(context, 'rsScanPrivacy'),
-                    style: theme.textTheme.bodySmall,
+        ),
+        child: ListView(
+          padding: const EdgeInsets.all(Tokens.md),
+          children: [
+            Text(
+              tr(context, 'rsScanHeading'),
+              style: theme.textTheme.headlineSmall,
+            ),
+            const SizedBox(height: Tokens.sm),
+            Text(
+              tr(context, 'rsScanGuidance'),
+              style: theme.textTheme.bodyMedium,
+            ),
+            const SizedBox(height: Tokens.lg),
+            if (shelfId == null) ...[
+              EmptyState(
+                message: tr(context, 'rsSetupBeforeScan'),
+                icon: Icons.storefront_outlined,
+              ),
+              BrandButton(
+                label: tr(context, 'rsStoreSetup'),
+                onPressed: () => context.go('/setup'),
+              ),
+            ] else
+              ClipRRect(
+                borderRadius: BorderRadius.circular(Tokens.radius),
+                child: AspectRatio(
+                  aspectRatio: 3 / 4,
+                  child: ColoredBox(
+                    color: theme.colorScheme.surfaceContainerHighest,
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        if (_photo != null)
+                          FutureBuilder(
+                            future: XFile(_photo!).readAsBytes(),
+                            builder:
+                                (context, snapshot) =>
+                                    snapshot.hasData
+                                        ? Image.memory(
+                                          snapshot.data!,
+                                          fit: BoxFit.contain,
+                                        )
+                                        : const CircularProgressIndicator(),
+                          )
+                        else if (camera != null && camera.value.isInitialized)
+                          Center(
+                            child: AspectRatio(
+                              aspectRatio: camera.value.aspectRatio,
+                              child: CameraPreview(camera),
+                            ),
+                          )
+                        else
+                          Center(
+                            child:
+                                _initializing
+                                    ? const CircularProgressIndicator()
+                                    : Icon(
+                                      Icons.no_photography_outlined,
+                                      size: Tokens.xl * 2,
+                                    ),
+                          ),
+                        if (_busy)
+                          ColoredBox(
+                            color: theme.colorScheme.surface.withValues(
+                              alpha: 0.7,
+                            ),
+                            child: const Center(
+                              child: CircularProgressIndicator(),
+                            ),
+                          ),
+                      ],
+                    ),
                   ),
                 ),
-              ],
+              ),
+            const SizedBox(height: Tokens.md),
+            if (_errorKey != null) ...[
+              ErrorNotice(message: tr(context, _errorKey!)),
+              if (_photo == null)
+                TextButton.icon(
+                  onPressed: _initializing ? null : _initializeCamera,
+                  icon: const Icon(Icons.refresh),
+                  label: Text(tr(context, 'rsRetryCamera')),
+                ),
+            ],
+            InfoCard(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(
+                    Icons.privacy_tip_outlined,
+                    color: theme.colorScheme.primary,
+                  ),
+                  const SizedBox(width: Tokens.md),
+                  Expanded(
+                    child: Text(
+                      tr(context, 'rsScanPrivacy'),
+                      style: theme.textTheme.bodySmall,
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
-          const SizedBox(height: Tokens.lg),
-        ],
+            const SizedBox(height: Tokens.lg),
+          ],
+        ),
       ),
     );
   }

@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -8,7 +7,7 @@ import 'core/app_controller.dart';
 import 'core/strings.dart';
 import 'core/theme.dart';
 import 'screens/auth.dart';
-import 'screens/pairing.dart';
+import 'screens/connection.dart';
 import 'screens/dashboard.dart';
 import 'screens/settings.dart';
 import 'screens/store_setup.dart';
@@ -28,17 +27,15 @@ final _routerProvider = Provider<GoRouter>((ref) {
       if (!controller.initialized) return null;
       final path = state.matchedLocation;
       if (!controller.authenticated) return path == '/login' ? null : '/login';
-      if (!controller.paired) return path == '/pair' ? null : '/pair';
-      if (path == '/login' || path == '/pair') return '/home';
+      if (!controller.paired) return path == '/connect' ? null : '/connect';
+      if (path == '/login' || path == '/connect') return '/home';
       return null;
     },
     routes: [
       GoRoute(path: '/login', builder: (_, _) => const AuthScreen()),
       GoRoute(
-        path: '/pair',
-        builder:
-            (_, _) =>
-                kIsWeb ? const CloudConnectionScreen() : const PairingScreen(),
+        path: '/connect',
+        builder: (_, _) => const CloudConnectionScreen(),
       ),
       GoRoute(path: '/home', builder: (_, _) => const DashboardScreen()),
       GoRoute(path: '/settings', builder: (_, _) => const SettingsScreen()),

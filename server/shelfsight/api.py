@@ -48,8 +48,9 @@ from .schemas import (
     StoreInput,
     StorePatch,
 )
-from .security import FirebaseVerifier, IdentityVerifier, RateLimiter, Sessions, bearer
+from .security import IdentityVerifier, RateLimiter, Sessions, SupabaseVerifier, bearer, token_hash
 from .tracking import ZoneTracker, timestamp
+from .vision_compatible import OpenAICompatibleVisionModel
 
 
 class BoundedBody:
@@ -89,8 +90,10 @@ class BoundedBody:
 
 
 class MonitorRuntime:
-    def __init__(self, session: dict, calibration: dict):
+    def __init__(self, session: dict, calibration: dict, device_token_hash: str):
         self.session, self.calibration = session, calibration
+        self.device_token_hash = device_token_hash
+        self.created_at = time.monotonic()
         self.tracker = ZoneTracker(
             calibration["zones"], session["thresholds"], session["shelf_thresholds"]
         )
@@ -127,9 +130,16 @@ def create_app(
     sessions = Sessions(
         db, config.data["limits"]["pairing_ttl_seconds"], config.data["limits"]["session_ttl_seconds"]
     )
-    verifier = verifier or FirebaseVerifier(settings.firebase_project_id)
+    verifier = verifier or SupabaseVerifier(
+        settings.supabase_url, settings.supabase_publishable_key.get_secret_value()
+    )
     detector = detector or MediaPipeDetector(settings)
-    vision = vision or GeminiVisionModel(settings, config)
+    if vision is None:
+        vision = (
+            GeminiVisionModel(settings, config)
+            if settings.vision_provider == "gemini"
+            else OpenAICompatibleVisionModel(settings, config)
+        )
     catalog = CatalogRepository(db, settings)
     decision = DisabledDecisionEngine()
     limiter = RateLimiter()
@@ -323,17 +333,42 @@ def create_app(
 
     @app.delete("/v1/session", status_code=204)
     async def revoke_session(uid: Owner, authorization: Annotated[str | None, Header()] = None):
+        token = bearer(authorization)
+        sessions.revoke(token)
         for session_id, runtime in list(runtimes.items()):
-            if runtime.session["owner_uid"] == uid:
+            if runtime.session["owner_uid"] == uid and runtime.device_token_hash == token_hash(token):
                 async with runtime.lock:
                     finish(uid, session_id, True)
-        sessions.revoke(bearer(authorization))
+                    runtimes.pop(session_id, None)
         return Response(status_code=204)
 
     @app.get("/v1/config")
     def configuration(uid: Owner):
+        public = config.public()
+        if settings.cloud_mode:
+            public["deployment"] = {"mode": "cloud", "persistence": "ephemeral_demo"}
+            public.setdefault("strings", {}).setdefault("en", {}).update(
+                {
+                    "privacySummary": (
+                        "Camera frames are sent over encrypted HTTPS to the cloud, processed in "
+                        "memory, and discarded. Anonymous tracking IDs last only for the monitoring "
+                        "session. Demo records may be lost when the service restarts."
+                    ),
+                    "monitorPrivacy": (
+                        "Frames are sent over an encrypted connection to the cloud and discarded "
+                        "after processing. Tracking is anonymous and limited to this session."
+                    ),
+                    "provider_detector": "Cloud person detection",
+                    "monitorStarting": "Connecting to cloud monitoring...",
+                    "connectionFailed": (
+                        "Cannot reach the cloud service. Check your internet connection."
+                    ),
+                    "sessionExpired": "Your cloud session expired. Sign in again to continue.",
+                    "invalidResponse": "The cloud service returned an invalid response. Try again.",
+                }
+            )
         return {
-            **config.public(),
+            **public,
             "capabilities": capabilities(),
             "providers": {
                 "detector": {"available": detector.available, "reason": detector.reason},
@@ -610,7 +645,7 @@ def create_app(
             candidates = await run_in_threadpool(vision.scan, raw)
         return {
             "candidates": candidates,
-            "source": "gemini",
+            "source": getattr(vision, "source", "gemini"),
             "warning": "Review every candidate and enter quantities; identification may be incorrect",
         }
 
@@ -626,13 +661,29 @@ def create_app(
         return db.create("calibration", uid, store_id, {**payload.model_dump(), "revision": revision})
 
     @app.post("/v1/stores/{store_id}/monitoring", status_code=201)
-    def start_monitoring(store_id: str, payload: MonitoringInput, uid: Owner):
+    async def start_monitoring(
+        store_id: str,
+        payload: MonitoringInput,
+        uid: Owner,
+        authorization: Annotated[str | None, Header()] = None,
+    ):
         store = db.get("store", store_id, uid)
         calibration = db.get("calibration", payload.calibration_id, uid)
         if calibration["store_id"] != store_id:
             raise HTTPException(422, "Calibration belongs to a different store")
         if not detector.available:
             raise HTTPException(503, detector.reason)
+        # A client may disappear between POST and the WebSocket handshake. Recover
+        # only abandoned starts; a connected monitor must be stopped explicitly.
+        for previous in db.list("monitoring", uid, store_id):
+            if previous["status"] != "active":
+                continue
+            runtime = runtimes.get(previous["id"])
+            timeout = config.data["limits"].get("stream_connect_timeout_seconds", 30)
+            if runtime and (runtime.connected or time.monotonic() - runtime.created_at < timeout):
+                raise HTTPException(409, "Stop the active monitoring session before starting another")
+            finish(uid, previous["id"], True)
+            runtimes.pop(previous["id"], None)
         with db.transaction():
             if any(session["status"] == "active" for session in db.list("monitoring", uid, store_id)):
                 raise HTTPException(409, "Stop the active monitoring session before starting another")
@@ -660,7 +711,9 @@ def create_app(
                     "bytes": 0,
                 },
             )
-            runtimes[session["id"]] = MonitorRuntime(session, calibration)
+            runtimes[session["id"]] = MonitorRuntime(
+                session, calibration, token_hash(bearer(authorization))
+            )
         return session
 
     @app.post("/v1/monitoring/{session_id}/stop")
@@ -739,7 +792,12 @@ def create_app(
         with db.transaction():
             if runtime.last_capture is not None:
                 gap = captured - runtime.last_capture
-                if gap <= config.data["limits"]["max_frame_age_seconds"]:
+                covered_shelves = [
+                    zone["shelf_id"]
+                    for zone in calibration["zones"]
+                    if gap <= session["shelf_thresholds"][zone["shelf_id"]]["coverage_gap_seconds"]
+                ]
+                if covered_shelves:
                     events.append(
                         db.event(
                             uid,
@@ -750,12 +808,12 @@ def create_app(
                                 **provenance(session, calibration),
                                 "started_at": timestamp(runtime.last_capture),
                                 "ended_at": timestamp(captured),
-                                "shelf_ids": [zone["shelf_id"] for zone in calibration["zones"]],
+                                "shelf_ids": covered_shelves,
                                 "incomplete": False,
                             },
                         )
                     )
-                else:
+                if gap > config.data["limits"]["max_frame_age_seconds"]:
                     events.extend(ledger_visit(uid, runtime, runtime.tracker.finish(True)))
             events.extend(ledger_visit(uid, runtime, runtime.tracker.update(detections, captured)))
             runtime.last_capture, runtime.sequence = captured, frame.sequence

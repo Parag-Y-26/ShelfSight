@@ -1,4 +1,4 @@
-"""Firebase identity verification and one-use pairing, with no development bypass."""
+"""Supabase identity verification and one-use pairing, with no development bypass."""
 
 from __future__ import annotations
 
@@ -11,11 +11,8 @@ from collections import defaultdict, deque
 from datetime import UTC, datetime
 from typing import Protocol
 
-import cachecontrol
-import google.auth.transport.requests
-import requests
+import httpx
 from fastapi import HTTPException
-from google.oauth2 import id_token
 
 from .db import Database
 
@@ -24,32 +21,36 @@ class IdentityVerifier(Protocol):
     def verify(self, token: str) -> str: ...
 
 
-class FirebaseVerifier:
-    def __init__(self, project_id: str):
-        self.project_id = project_id
-        # Google's cache headers keep public signing keys usable through short network interruptions.
-        session = cachecontrol.CacheControl(requests.Session())
-        self.request = google.auth.transport.requests.Request(session=session)
+class SupabaseVerifier:
+    # Validate bearer access tokens with the trusted Supabase Auth endpoint over TLS.
+    def __init__(self, project_url: str, publishable_key: str):
+        self.project_url = project_url.rstrip("/")
+        self.publishable_key = publishable_key
 
     def verify(self, token: str) -> str:
-        if not self.project_id:
-            raise HTTPException(503, "Firebase project is not configured on the laptop")
+        if not self.project_url or not self.publishable_key:
+            raise HTTPException(503, "Supabase Auth is not configured on the server")
         try:
-            claims = id_token.verify_firebase_token(token, self.request, audience=self.project_id)
-            expected_issuer = f"https://securetoken.google.com/{self.project_id}"
-            uid = claims.get("sub", "")
-            if (
-                claims.get("iss") != expected_issuer
-                or claims.get("aud") != self.project_id
-                or not isinstance(uid, str)
-                or not 0 < len(uid) <= 128
-                or claims.get("exp", 0) <= time.time()
-                or claims.get("iat", float("inf")) > time.time()
-            ):
-                raise ValueError("Invalid Firebase claims")
-            return uid
-        except (ValueError, requests.RequestException, google.auth.exceptions.GoogleAuthError) as exc:
-            raise HTTPException(401, "Invalid or expired Firebase ID token") from exc
+            response = httpx.get(
+                f"{self.project_url}/auth/v1/user",
+                headers={"apikey": self.publishable_key, "Authorization": f"Bearer {token}"},
+                timeout=5.0,
+            )
+        except httpx.TimeoutException as exc:
+            raise HTTPException(503, "Supabase Auth verification timed out") from exc
+        except httpx.RequestError as exc:
+            raise HTTPException(503, "Supabase Auth is temporarily unavailable") from exc
+        if response.status_code in (400, 401, 403):
+            raise HTTPException(401, "Invalid or expired Supabase access token")
+        if response.status_code != 200:
+            raise HTTPException(503, "Supabase Auth verification failed")
+        try:
+            user_id = response.json().get("id")
+            if not isinstance(user_id, str) or not user_id or len(user_id) > 128:
+                raise ValueError("Missing Supabase user id")
+            return user_id
+        except (ValueError, AttributeError) as exc:
+            raise HTTPException(401, "Invalid Supabase user response") from exc
 
 
 def token_hash(token: str) -> str:
@@ -115,7 +116,7 @@ class Sessions:
             return self.issue_authenticated(uid, device_name)
 
     def issue_authenticated(self, uid: str, device_name: str) -> dict:
-        """Caller must verify Firebase identity or consume a local pairing proof first."""
+        """Caller must verify Supabase identity or consume a local pairing proof first."""
         token, expires = secrets.token_urlsafe(48), time.time() + self.session_ttl
         data = {
             "device_name": device_name,

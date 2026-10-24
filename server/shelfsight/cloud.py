@@ -10,10 +10,10 @@ from .config import Settings
 
 def main():
     settings = Settings(cloud_mode=True)
-    if not settings.firebase_project_id:
-        raise ValueError("Cloud mode requires SHELFSIGHT_FIREBASE_PROJECT_ID")
-    if not settings.web_dir.joinpath("index.html").is_file():
-        raise ValueError("Build Flutter Web before starting the cloud server")
+    if not settings.supabase_url or not settings.supabase_publishable_key.get_secret_value():
+        raise ValueError(
+            "Cloud mode requires SHELFSIGHT_SUPABASE_URL and SHELFSIGHT_SUPABASE_PUBLISHABLE_KEY"
+        )
     uvicorn.run(
         create_app(settings),
         host="0.0.0.0",  # noqa: S104

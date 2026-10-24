@@ -1,5 +1,6 @@
 import base64
 import time
+from types import SimpleNamespace
 
 import cv2
 import numpy as np
@@ -305,3 +306,113 @@ def test_validation_never_echoes_secrets(environment):
     )
     assert result.status_code == 422
     assert secret not in result.text
+
+
+@pytest.mark.parametrize("shelf_override", [None, 2.0])
+def test_coverage_respects_store_and_shelf_gap_thresholds(store, shelf_override):
+    client, _, headers, data, _ = store
+    store_id = data["store"]["id"]
+    shelf_id = data["shelves"][0]["id"]
+    assert (
+        client.patch(
+            f"/v1/stores/{store_id}",
+            headers=headers,
+            json={"settings": {"coverage_gap_seconds": 0.5}},
+        ).status_code
+        == 200
+    )
+    if shelf_override is not None:
+        assert (
+            client.patch(
+                f"/v1/shelves/{shelf_id}",
+                headers=headers,
+                json={"settings": {"coverage_gap_seconds": shelf_override}},
+            ).status_code
+            == 200
+        )
+    cal = calibration(client, headers, data).json()
+    response = client.post(
+        f"/v1/stores/{store_id}/monitoring",
+        headers=headers,
+        json={"calibration_id": cal["id"]},
+    )
+    assert response.status_code == 201, response.text
+    session_id = response.json()["id"]
+    _, encoded = cv2.imencode(".jpg", np.zeros((100, 100, 3), dtype=np.uint8))
+    frame = {
+        "type": "frame",
+        "session_id": session_id,
+        "sequence": 1,
+        "captured_at_ms": int(time.time() * 1000) - 2000,
+        "orientation": "portraitUp",
+        "width": 100,
+        "height": 100,
+        "image_base64": base64.b64encode(encoded).decode(),
+    }
+    with client.websocket_connect(f"/v1/monitoring/{session_id}/stream", headers=headers) as ws:
+        ws.send_json(frame)
+        assert ws.receive_json()["type"] == "ack"
+        ws.send_json({**frame, "sequence": 2, "captured_at_ms": frame["captured_at_ms"] + 1000})
+        assert ws.receive_json()["type"] == "ack"
+    summary = client.get(f"/v1/stores/{store_id}/analytics", headers=headers).json()
+    expected = 1.0 if shelf_override is not None else 0.0
+    assert summary["coverage_seconds"] == expected
+    shelf = next(s for s in summary["shelves"] if s["shelf_id"] == shelf_id)
+    assert shelf["exposure_seconds"] == expected
+
+
+def test_abandoned_monitoring_start_expires_without_blocking_restart(store, monkeypatch):
+    client, app, headers, data, _ = store
+    store_id = data["store"]["id"]
+    cal = calibration(client, headers, data).json()
+    clock = [1000.0]
+    monkeypatch.setattr(
+        "shelfsight.api.time",
+        SimpleNamespace(monotonic=lambda: clock[0], time=time.time, perf_counter=time.perf_counter),
+    )
+    path = f"/v1/stores/{store_id}/monitoring"
+    first = client.post(path, headers=headers, json={"calibration_id": cal["id"]})
+    assert first.status_code == 201
+    assert client.post(path, headers=headers, json={"calibration_id": cal["id"]}).status_code == 409
+    clock[0] += 600
+    second = client.post(path, headers=headers, json={"calibration_id": cal["id"]})
+    assert second.status_code == 201, second.text
+    assert second.json()["id"] != first.json()["id"]
+    previous = app.state.db.get("monitoring", first.json()["id"], "a")
+    assert previous["status"] == "interrupted"
+    assert first.json()["id"] not in app.state.runtimes
+    with client.websocket_connect(f"/v1/monitoring/{second.json()['id']}/stream", headers=headers):
+        clock[0] += 600
+        assert client.post(path, headers=headers, json={"calibration_id": cal["id"]}).status_code == 409
+
+
+def test_revocation_only_stops_monitors_created_by_that_device(store, environment):
+    client, app, headers, data, _ = store
+    other_device = environment[2]()
+    store_id = data["store"]["id"]
+    cal = calibration(client, headers, data).json()
+    session = client.post(
+        f"/v1/stores/{store_id}/monitoring",
+        headers=headers,
+        json={"calibration_id": cal["id"]},
+    ).json()
+    with client.websocket_connect(f"/v1/monitoring/{session['id']}/stream", headers=headers):
+        assert client.delete("/v1/session", headers=other_device).status_code == 204
+        assert app.state.db.get("monitoring", session["id"], "a")["status"] == "active"
+        assert client.get("/v1/session", headers=headers).status_code == 200
+        assert client.delete("/v1/session", headers=headers).status_code == 204
+        assert app.state.db.get("monitoring", session["id"], "a")["status"] == "interrupted"
+
+
+@pytest.mark.parametrize("interval", [5000, 6000])
+def test_capture_interval_must_fit_frame_timeout(store, interval):
+    client, _, headers, data, _ = store
+    store_id = data["store"]["id"]
+    shelf_id = data["shelves"][0]["id"]
+    for path in (f"/v1/stores/{store_id}", f"/v1/shelves/{shelf_id}"):
+        response = client.patch(
+            path,
+            headers=headers,
+            json={"settings": {"monitoring_interval_ms": interval}},
+        )
+        assert response.status_code == 422, response.text

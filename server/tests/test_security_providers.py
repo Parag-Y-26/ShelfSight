@@ -1,7 +1,7 @@
 import sqlite3
 import struct
-import time
 from datetime import UTC, datetime
+from types import SimpleNamespace
 
 import cv2
 import numpy as np
@@ -18,35 +18,55 @@ from shelfsight.providers import (
     base64_image,
     decode_image,
 )
-from shelfsight.security import FirebaseVerifier
+from shelfsight.security import SupabaseVerifier
 
 
-def test_firebase_claim_checks_are_explicit(monkeypatch):
-    valid = {
-        "sub": "owner",
-        "iss": "https://securetoken.google.com/sample-project",
-        "aud": "sample-project",
-        "exp": time.time() + 100,
-        "iat": time.time() - 1,
-    }
-    verifier = FirebaseVerifier("sample-project")
-    monkeypatch.setattr("shelfsight.security.id_token.verify_firebase_token", lambda *a, **kw: valid)
-    assert verifier.verify("signed-token") == "owner"
-    for field, bad in (
-        ("iss", "https://attacker"),
-        ("aud", "other-project"),
-        ("sub", ""),
-        ("exp", 0),
-        ("iat", time.time() + 10),
-    ):
-        original = valid[field]
-        valid[field] = bad
-        with pytest.raises(HTTPException) as failure:
-            verifier.verify("signed-token")
-        assert failure.value.status_code == 401
-        valid[field] = original
+def test_supabase_verifier_asks_trusted_auth_service_for_user(monkeypatch):
+    calls = []
+    response = SimpleNamespace(
+        status_code=200, json=lambda: {"id": "a6d5c56b-9c1e-4cf3-92fd-1234567890ab"}
+    )
+
+    def fake_get(url, *, headers, timeout):
+        calls.append((url, headers, timeout))
+        return response
+
+    monkeypatch.setattr("shelfsight.security.httpx.get", fake_get)
+    verifier = SupabaseVerifier("https://project.supabase.co/", "sb_publishable_test")
+    assert verifier.verify("access-token") == "a6d5c56b-9c1e-4cf3-92fd-1234567890ab"
+    assert calls == [
+        (
+            "https://project.supabase.co/auth/v1/user",
+            {"apikey": "sb_publishable_test", "Authorization": "Bearer access-token"},
+            5.0,
+        )
+    ]
+
+
+def test_supabase_verifier_rejects_invalid_tokens_and_missing_config(monkeypatch):
+    from shelfsight.security import SupabaseVerifier
+
+    monkeypatch.setattr(
+        "shelfsight.security.httpx.get",
+        lambda *a, **kw: SimpleNamespace(status_code=401, json=lambda: {"message": "invalid"}),
+    )
     with pytest.raises(HTTPException) as failure:
-        FirebaseVerifier("").verify("anything")
+        SupabaseVerifier("https://project.supabase.co", "sb_publishable_test").verify("bad")
+    assert failure.value.status_code == 401
+    with pytest.raises(HTTPException) as failure:
+        SupabaseVerifier("", "").verify("anything")
+    assert failure.value.status_code == 503
+
+
+def test_supabase_verifier_fails_closed_on_auth_service_unavailability(monkeypatch):
+    import httpx
+
+    def fail(*args, **kwargs):
+        raise httpx.ConnectError("offline")
+
+    monkeypatch.setattr("shelfsight.security.httpx.get", fail)
+    with pytest.raises(HTTPException) as failure:
+        SupabaseVerifier("https://project.supabase.co", "sb_publishable_test").verify("token")
     assert failure.value.status_code == 503
 
 

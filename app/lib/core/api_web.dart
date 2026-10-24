@@ -30,7 +30,7 @@ String friendlyError(Object error) {
 String normalizeFingerprint(String value) =>
     value.replaceAll(':', '').replaceAll(RegExp(r'\s'), '').toLowerCase();
 
-Uri pairingUri(String value) {
+Uri apiUri(String value) {
   final uri = Uri.tryParse(value.trim());
   if (uri == null ||
       uri.scheme != 'https' ||
@@ -44,7 +44,7 @@ Uri pairingUri(String value) {
   return uri.replace(path: '');
 }
 
-/// Same-origin HTTPS and Firebase-verified sessions. Tokens stay in memory.
+/// Same-origin HTTPS and Supabase-verified sessions. Tokens stay in memory.
 class ApiClient {
   ApiClient({FlutterSecureStorage? storage});
   Dio? _dio;
@@ -55,7 +55,15 @@ class ApiClient {
   void Function()? onUnauthorized;
   bool get paired =>
       _token != null && (_expiry?.isAfter(DateTime.now().toUtc()) ?? false);
+  bool get localMode => false;
   String get serverAddress => Uri.base.origin;
+  bool get hasApiAddress => true;
+  Future<void> setApiAddress(String address) async {
+    if (apiUri(address).origin != Uri.base.origin) {
+      throw const ApiFailure('invalidServerAddress');
+    }
+  }
+
   String get serverIdentity => Uri.base.origin;
   DateTime? get expiresAt => _expiry;
   Future<void> restore(String uid) => clear();

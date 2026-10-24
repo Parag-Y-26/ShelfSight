@@ -2,7 +2,7 @@
 
 **Date:** 2026-10-23
 **Auditor:** opensource-sanitizer v1.0.0
-**Verdict:** PASS WITH WARNINGS
+**Verdict:** FAIL
 
 ## Scope
 
@@ -17,12 +17,12 @@ Exact Git publication candidates: tracked files plus `git ls-files --others --ex
 | Internal References | PASS | 0 findings |
 | Dangerous Files | PASS | 0 publish candidates |
 | Config Completeness | WARN | 5 optional compatibility aliases not duplicated in examples |
-| Git History | PASS | One initial root commit; all historical files and commit metadata scanned |
+| Git History | FAIL | 2 commits; strict sanitizer protocol requires a single initial commit |
 | Unreadable Files | PASS | 0 files |
 
 ## Critical Findings (Must Fix Before Release)
 
-None. The TLS unit test now uses an RFC 5737 documentation address.
+1. **[HISTORY]** The repository now contains two commits. Both were fully scanned with zero content findings, but this sanitizer protocol explicitly requires a single initial commit and treats a larger count as FAIL. The earlier one-commit audit passed. The TLS unit test uses an RFC 5737 documentation address.
 
 ## Warnings (Review Before Release)
 
@@ -46,7 +46,7 @@ Tally by type: none. No adjacent `Promptwars_PY.UNREADABLE_FILES.txt` was genera
 
 ## Recommendation
 
-Critical checks pass for the audited publication candidates. Canonical environment settings are complete; the five compatibility aliases are optional alternatives. The initial commit and staged publication content have been scanned. Include this updated report in the final commit before pushing. No source files were modified by the audit.
+Publication-content checks pass. The current strict single-initial-commit history requirement fails; resolve that policy gate before using this report to certify a new open-source fork. Canonical environment settings are complete; five compatibility aliases are optional alternatives. No source or Git history was modified by the audit.
 
 ## Git History Audit
 
@@ -67,6 +67,6 @@ Re-scanned all 106 current publication files, including this report: 89 text and
 
 Six pending Dart/test files were included. Existing commits `7c9e1e5` and `bf9ff3a` were scanned in full, including commit metadata: 212 historical file snapshots, zero findings. The original initial-commit identifier above predates its normalization amendment; `7c9e1e5` is the current initial root commit. The second commit is a subsequent public CI correction, not unsanitized imported history.
 
-Verdict remains **PASS WITH WARNINGS** solely for the five optional configuration aliases listed above.
+Current strict-protocol verdict: **FAIL** because the history count is two. Credential and publication-content scans pass. Five optional configuration aliases remain warnings. No history rewriting was performed or authorized by this audit.
 
 Normalized current source manifest SHA-256, excluding this self-referential report: `8a2581a06df79cc185e1aed445010c4dac9ddccc83d4604a7176ea78e36e417d`. Working text CRLF is normalized to LF for this digest; binary bytes are preserved.

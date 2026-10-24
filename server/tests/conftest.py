@@ -38,7 +38,8 @@ def environment(tmp_path):
     settings = Settings(
         runtime_dir=tmp_path,
         config_path=ROOT / "config" / "defaults.json",
-        firebase_project_id="test-project",
+        supabase_url="https://test.supabase.co",
+        supabase_publishable_key="sb_publishable_test",
         _env_file=None,
     )
     detector = TestDetector()

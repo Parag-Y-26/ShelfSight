@@ -30,7 +30,40 @@ class MemoryCache extends OwnerCache {
   Future<void> close() async {}
 }
 
+class StoreSelectionApi extends PendingApi {
+  final snapshots = <String, Completer<dynamic>>{};
+  @override
+  Future<dynamic> get(String path, {Map<String, dynamic>? query}) =>
+      (snapshots[path] ??= Completer<dynamic>()).future;
+}
+
 void main() {
+  test('a late store snapshot cannot undo a newer store selection', () async {
+    final api = StoreSelectionApi();
+    final cache = MemoryCache();
+    final app = AppController.forTesting(api: api, cache: cache);
+    final first = app.selectStore('first');
+    final second = app.selectStore('second');
+    api.snapshots['/stores/second/snapshot']!.complete({
+      'store': {'id': 'second'},
+      'products': [
+        {'name': 'Current store product'},
+      ],
+    });
+    await second;
+    api.snapshots['/stores/first/snapshot']!.complete({
+      'store': {'id': 'first'},
+      'products': [
+        {'name': 'Previous store product'},
+      ],
+    });
+    await first;
+    expect(app.store?['id'], 'second');
+    expect(app.products.single['name'], 'Current store product');
+    expect(cache.values['snapshot']['store']['id'], 'second');
+    app.dispose();
+  });
+
   test(
     'late stores response cannot repopulate state after disconnect',
     () async {

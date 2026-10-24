@@ -14,9 +14,12 @@ import 'package:shelfsight/core/app_controller.dart';
 import 'package:shelfsight/core/strings.dart';
 import 'package:shelfsight/core/theme.dart';
 import 'package:shelfsight/screens/analytics.dart';
+import 'package:shelfsight/screens/dashboard.dart';
+import 'package:shelfsight/screens/connection.dart';
 import 'package:shelfsight/screens/product.dart';
 import 'package:shelfsight/screens/shelf_results.dart';
 import 'package:shelfsight/screens/store_setup.dart';
+import 'package:shelfsight/widgets/shared.dart';
 
 const _config = <String, dynamic>{
   'store_types': [
@@ -147,6 +150,13 @@ class _SwitchableApp extends AppController {
   int revision = 0;
   @override
   int get identityGeneration => revision;
+}
+
+class _DisconnectedApi extends _Api {
+  @override
+  bool get paired => false;
+  @override
+  String? get serverAddress => null;
 }
 
 Future<void> _pump(
@@ -753,5 +763,91 @@ void main() {
       find.byType(MaterialApp),
       matchesGoldenFile('goldens/retail_analytics.png'),
     );
+  });
+
+  testWidgets('dashboard reopens shelf inventory after initial setup', (
+    tester,
+  ) async {
+    final api = _Api();
+    final app = AppController.forTesting(
+      api: api,
+      config: _config,
+      store: _store,
+      shelves: [_shelf],
+    );
+    await _pump(tester, const DashboardScreen(), app, routing: true);
+    final manage = find.text('Manage shelves and products');
+    expect(manage, findsOneWidget);
+    await tester.ensureVisible(manage);
+    await tester.tap(manage);
+    await tester.pumpAndSettle();
+    expect(find.byIcon(Icons.shelves), findsOneWidget);
+    expect(api.posts, isEmpty);
+  });
+
+  testWidgets('Android connection offers local pairing and optional hosted API', (
+    tester,
+  ) async {
+    final api = _DisconnectedApi();
+    final app = AppController.forTesting(api: api, config: _config);
+    await _pump(tester, const CloudConnectionScreen(), app);
+    expect(find.text('API connection'), findsOneWidget);
+    expect(find.text('Pair your laptop'), findsOneWidget);
+    expect(_field('Local server HTTPS address'), findsOneWidget);
+    expect(_field('Certificate SHA-256 fingerprint'), findsOneWidget);
+    expect(_field('One-use pairing code'), findsOneWidget);
+    expect(find.text('HTTPS API address'), findsNothing);
+    await tester.tap(find.text('Hosted API'));
+    await tester.pumpAndSettle();
+    expect(_field('API HTTPS address'), findsOneWidget);
+    expect(find.text('Certificate SHA-256 fingerprint'), findsNothing);
+    expect(find.text('One-use pairing code'), findsNothing);
+    await expectLater(
+      find.byType(MaterialApp),
+      matchesGoldenFile('goldens/android_connection.png'),
+    );
+    await tester.enterText(_field('API HTTPS address'), 'http://example.com');
+    await tester.tap(find.text('Connect to API'));
+    await tester.pumpAndSettle();
+    expect(
+      find.text(
+        'Enter an HTTPS API address with no path, query, credentials or fragment.',
+      ),
+      findsOneWidget,
+    );
+    expect(api.posts, isEmpty);
+  });
+
+  testWidgets('Android back returns a root scan to Dashboard without exiting', (
+    tester,
+  ) async {
+    final router = GoRouter(
+      initialLocation: '/scan',
+      routes: [
+        GoRoute(
+          path: '/home',
+          builder:
+              (_, _) =>
+                  const AppBackGuard(child: Scaffold(body: Text('Dashboard'))),
+        ),
+        GoRoute(
+          path: '/scan',
+          builder:
+              (_, _) => const AppBackGuard(child: Scaffold(body: Text('Scan'))),
+        ),
+      ],
+    );
+    addTearDown(router.dispose);
+    await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+    await tester.pumpAndSettle();
+    expect(find.text('Scan'), findsOneWidget);
+
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    expect(find.text('Dashboard'), findsOneWidget);
+
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    expect(find.text('Dashboard'), findsOneWidget);
   });
 }

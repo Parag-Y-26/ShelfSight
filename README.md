@@ -1,40 +1,34 @@
-# ShelfSight
+# ShelfSight for Android
 
-## Flutter Web and Cloud Run
+ShelfSight uses Supabase Auth for sign-in and can connect to a Python API running on your Windows PC over your private Wi-Fi. **Google Cloud is not required.** A hosted HTTPS API is optional. Local API sessions use a one-time pairing code and certificate pin; the phone and PC must be on the same reachable network while the server is running. Supabase Auth remains an online dependency. ShelfSight's local server can call Gemini, NVIDIA NIM, or another vision-enabled OpenAI-compatible Chat Completions API. AI API keys stay on the server, not in the Android app.
 
-The same Flutter app now builds for the browser. Build with `flutter build web --release --dart-define-from-file=../config/web.json` inside `app`, using a registered Firebase **web** app's client settings. The browser uses same-origin HTTPS, Firebase sign-in, tab-local caches, and one-use WebSocket tickets. Android keeps laptop pairing and certificate pinning.
+## Run locally without Google Cloud
 
-The root Dockerfile serves Flutter Web and the authenticated API together. Include `runtime/models/detector.tflite` in the build context and set `SHELFSIGHT_FIREBASE_PROJECT_ID`; supply Gemini credentials through Secret Manager. The entry point reads Cloud Run's `PORT`. Cloud Run requires a billing-enabled project. Run a single worker and a maximum of one instance because monitoring state and SQLite are local to the instance. **This cloud demo's records can reset when the instance restarts; durable multi-instance persistence is not implemented.** Browser camera monitoring uploads frames to the cloud server, so obtain consent before starting it. Barcode entry is manual in browsers; ML Kit barcode scanning remains Android-only.
+1. In Supabase Auth → URL Configuration, allow `com.shelfsight.app://auth-callback`. Email/password sign-in is supported; Google sign-in also requires enabling Google in Supabase Auth and configuring its client IDs.
+2. Copy `config/local.example.json` to ignored `config/local.json` and fill `SUPABASE_URL` and the public `SUPABASE_PUBLISHABLE_KEY`. These two values are used by the mobile client and are not service-role secrets.
+3. Copy `server/.env.example` to `server/.env` if you do not already have that file. Set `SHELFSIGHT_SUPABASE_URL` and `SHELFSIGHT_SUPABASE_PUBLISHABLE_KEY` there so the local API can verify signed-in users. Do not commit this file.
+4. Optionally configure shelf-photo identification in `server/.env`. For hosted NVIDIA NIM, set `SHELFSIGHT_VISION_PROVIDER=nvidia-nim`, `SHELFSIGHT_VISION_API_KEY` to the NIM key, and `SHELFSIGHT_VISION_MODEL` to the exact model ID enabled for your account. Leave `SHELFSIGHT_VISION_BASE_URL` blank to use NVIDIA's hosted endpoint. For another OpenAI-compatible vision API, use `SHELFSIGHT_VISION_PROVIDER=openai-compatible` and set its HTTPS base URL, API key and vision-capable model ID. A local NIM container can use a loopback base URL such as `http://127.0.0.1:8000/v1`. The adapter sends an image and asks for structured JSON; arbitrary APIs that do not implement OpenAI Chat Completions with image input need their own adapter. Keep every provider key in `server/.env` or a server secret manager, never in `config/local.json` or the APK.
+5. From the repository root, run `./scripts/Start-Server.ps1`. The server prints its HTTPS address and the path to `runtime/pairing.json`; it also creates a one-use pairing code and TLS certificate fingerprint. If address auto-detection is wrong, set `SHELFSIGHT_PUBLIC_ADDRESS=https://<your-PC-Wi-Fi-IP>:8443` in `server/.env` and restart.
+6. Build and install the app with `./scripts/Build-App.ps1`, sign in, select **Pair your laptop**, and enter the address, fingerprint and pairing code from `runtime/pairing.json`. Pairing validates the exact certificate fingerprint and consumes the code. Keep the phone and PC on the same private Wi-Fi. If Windows Firewall blocks the connection, allow TCP port 8443 on the **Private** profile only; do not expose it to Public networks.
 
-Validated locally: Flutter Web release compilation, 31 Flutter tests, 19 backend tests, and backend lint. Live cloud deployment and physical camera accuracy require separate verification.
+The local server writes SQLite data and protected TLS/pairing files under `runtime/`. Keep the server process running while using the app. Closing it stops API access; the phone may retain an offline snapshot, but cannot sync. Shelf scans remain unavailable until a vision provider and valid model are configured; product entry can still be done manually. A hosted NVIDIA API requires internet access from the PC. Self-hosted NIM requires suitable NVIDIA hardware/runtime; the Android app does not run the NIM model itself.
 
-Flutter Android retail setup and local Python shelf monitoring. This is an original demo application, not a production deployment. Google technologies: Firebase Authentication, ML Kit barcodes, Gemini shelf identification and MediaPipe local person detection.
+## Optional hosted API
 
-## Start
+Choose **Hosted API** on the app connection screen to connect to an already deployed HTTPS API instead of pairing a PC. The optional Google Cloud Run helper is in [API hosting](docs/CLOUD_DEPLOYMENT.md); it is not needed for the local setup above. Do not set `SHELFSIGHT_API_URL` in `config/local.json` unless you intend to use a hosted service.
 
-1. Install Flutter stable, Android SDK and uv. Use Python 3.12. Run `uv sync --extra dev` inside `server` and `flutter pub get` inside `app`.
-2. Copy `server/.env.example` to `server/.env`. Supply Firebase project ID, Gemini API key/model, the detector model path, and an HTTPS public LAN address reachable by the phone. Credentials and runtime pairing artifacts are ignored by Git.
-3. Copy `config/local.example.json` to `config/local.json` and provide Firebase Android client metadata and Google web OAuth client ID. Firebase must enable email/password and Google providers, register Android package `com.shelfsight.app`, and register the APK signing SHA fingerprints.
-4. From the repository root run `scripts/Start-Server.ps1`. It generates a local TLS certificate and a short-lived pairing QR under `runtime`. No camera frames are saved by monitoring.
-5. Run `scripts/Build-App.ps1`; install the generated APK on Android. Sign in, scan the laptop pairing QR, enter your store/floor/shelf data, scan or manually add products, and place shelves on the map.
-6. Mount the phone, open Monitoring, draw separate shopper interaction zones, save calibration, and start. Floor-map positions do not calibrate the camera. Recalibrate after moving or rotating the camera.
+## Purpose and limits
 
-## Honest measurement boundaries
+The implemented scope is store setup, editable shelf identification suggestions, barcode/manual products, recorded inventory, floor maps, anonymous shelf-zone visits, dwell time, analytics and CSV export. Inventory changes only through explicit corrections. Visits are zone visits, not unique customers or payments. Pickup, put-back, touch and sales estimation are unavailable. Empty analytics do not contain fabricated results.
 
-Visits are zone visits, not distinct customers or payments. Dwell time uses anonymous short-lived tracks. Recorded stock changes only through explicit inventory corrections. Pickup, put-back, touch, sales estimation, restaurant mode and Laya execution are unavailable. Empty analytics contain no fabricated values. Shelf identification is a Gemini suggestion requiring correction and user-entered quantities; it does not certify nutrition or regulatory status. Monitoring is foreground-only.
+Monitoring frames are sent over encrypted TLS to the configured ShelfSight API, processed in memory and discarded. Requested shelf scans are sent from the API to its configured vision provider. Shelf names, positions and quantities proposed by AI require human review.
 
-Config-driven options and defaults are in `config/defaults.json`. Store and shelf overrides take precedence. New option labels can be supplied under `strings.en` without an APK release. Run Build-App after editing bundled defaults; paired clients also refresh configuration from the server.
+This remains a demo. Existing Firebase users are not automatically imported: users need to create/confirm a Supabase account. Firebase passwords and old Firebase user IDs do not transfer, so data previously scoped to a Firebase UID may need an explicit migration/mapping before those users can access it. Camera accuracy, live sign-in, live vision identification, connection recovery and long-running Android monitoring require separate acceptance testing.
 
-## Checks and evidence
+## Development checks
 
-Run `uv run pytest --cov=shelfsight` and `uv run ruff check shelfsight tests` from server. Run `flutter analyze` and `flutter test` from app. Run `uv run --python 3.12 python -m unittest discover -s tests` from the root for the evaluation harness.
+From `server`: `uv sync --extra dev`, `uv run pytest --cov=shelfsight`, and `uv run ruff check shelfsight tests`.
 
-Use `scripts/evaluate_visits.py --predictions events.json --truth labels.json --output results.json` to compare real events with independently labelled shelf_id/started_at/ended_at intervals. Optional `--frames acks.json` measures processing latency. Synthetic unit tests do not establish detector accuracy. Physical camera accuracy, ten-minute endurance, reconnect and offline acceptance must be separately measured before claiming them.
+From `app`: `flutter pub get`, `flutter analyze`, and `flutter test`. From the repository root: `uv run --python 3.12 python -m unittest discover -s tests`.
 
-Use only product/shelf stills you are authorized to transmit to Gemini. Live monitoring stays on the local network. Firebase login and Gemini scans require internet; existing local device sessions expire according to configuration. OS account permissions protect laptop persistence; database encryption at rest is not claimed.
-
-See docs/CONTRACT.md, docs/WORKBOARD.md, module handoffs and THIRD_PARTY_NOTICES.md for implementation details and remaining evidence.
-
-## GitHub Android build
-
-The manually triggered `Android verification and APK` workflow analyzes and tests the app, then packages a debug ARM64 APK. Configure repository Actions secret `SHELFSIGHT_FIREBASE_CONFIG` with the contents of your ignored `config/local.json`. It contains Firebase client build metadata; never place server Gemini credentials in this secret or in an APK. Successful runs publish the `shelfsight-android-demo` artifact for seven days. Register the signing SHA printed by that run in Firebase before testing Google sign-in. Each fresh runner may generate a different debug signing certificate. This is a demo build, not release signing.
+The Python tests inject identity/detector providers. They validate behavior, ownership and event calculations, not physical detector accuracy. The evaluation script in `scripts/evaluate_visits.py` compares recorded intervals with independent labels when real measurements are available. See [the audit](docs/APP_AUDIT.md) for verified results and remaining acceptance gaps.

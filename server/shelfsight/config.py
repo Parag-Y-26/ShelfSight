@@ -6,6 +6,7 @@ import copy
 import json
 import math
 from pathlib import Path
+from typing import Literal
 
 from pydantic import AliasChoices, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -17,9 +18,13 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="SHELFSIGHT_", env_file=".env", extra="ignore", populate_by_name=True
     )
-    firebase_project_id: str = Field(
+    supabase_url: str = Field(
         default="",
-        validation_alias=AliasChoices("SHELFSIGHT_FIREBASE_PROJECT_ID", "FIREBASE_PROJECT_ID"),
+        validation_alias=AliasChoices("SHELFSIGHT_SUPABASE_URL", "SUPABASE_URL"),
+    )
+    supabase_publishable_key: SecretStr = Field(
+        default=SecretStr(""),
+        validation_alias=AliasChoices("SHELFSIGHT_SUPABASE_PUBLISHABLE_KEY", "SUPABASE_PUBLISHABLE_KEY"),
     )
     gemini_api_key: SecretStr = Field(
         default=SecretStr(""),
@@ -29,6 +34,41 @@ class Settings(BaseSettings):
     gemini_max_output_tokens: int = Field(default=4096, ge=128, le=65536)
     gemini_model: str = Field(
         default="", validation_alias=AliasChoices("SHELFSIGHT_GEMINI_MODEL", "GEMINI_MODEL")
+    )
+    vision_provider: Literal["gemini", "nvidia-nim", "openai-compatible"] = Field(
+        default="gemini",
+        validation_alias=AliasChoices("SHELFSIGHT_VISION_PROVIDER", "VISION_PROVIDER"),
+    )
+    vision_api_key: SecretStr = Field(
+        default=SecretStr(""),
+        validation_alias=AliasChoices(
+            "SHELFSIGHT_VISION_API_KEY",
+            "SHELFSIGHT_OPENAI_API_KEY",
+            "SHELFSIGHT_NVIDIA_NIM_API_KEY",
+            "VISION_API_KEY",
+            "OPENAI_API_KEY",
+            "NVIDIA_NIM_API_KEY",
+        ),
+    )
+    vision_base_url: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "SHELFSIGHT_VISION_BASE_URL",
+            "SHELFSIGHT_OPENAI_BASE_URL",
+            "VISION_BASE_URL",
+            "OPENAI_BASE_URL",
+            "NVIDIA_NIM_BASE_URL",
+        ),
+    )
+    vision_model: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "SHELFSIGHT_VISION_MODEL",
+            "SHELFSIGHT_OPENAI_MODEL",
+            "VISION_MODEL",
+            "OPENAI_MODEL",
+            "NVIDIA_NIM_MODEL",
+        ),
     )
     runtime_dir: Path = ROOT / "runtime"
     config_path: Path = ROOT / "config" / "defaults.json"
@@ -87,6 +127,11 @@ class BusinessConfig:
                 raise ValueError(f"Setting {key} must be between zero and one")
             if key in {"monitoring_interval_ms", "frame_max_dimension"} and value <= 0:
                 raise ValueError(f"Setting {key} must be positive")
+            if (
+                key == "monitoring_interval_ms"
+                and value >= self.data["limits"]["max_frame_age_seconds"] * 1000
+            ):
+                raise ValueError("Frame interval must be shorter than the frame timeout")
             if isinstance(defaults[key], int) and not isinstance(value, int):
                 raise ValueError(f"Setting {key} must be an integer")
             if key == "frame_max_dimension" and value * value > self.data["limits"]["max_image_pixels"]:
