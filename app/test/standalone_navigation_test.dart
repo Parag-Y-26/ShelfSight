@@ -12,10 +12,12 @@ import 'package:shelfsight/screens/dashboard.dart';
 import 'standalone_controller_test.dart' show NoServerApi, LocalTestCache;
 import 'runtime_settings_test.dart' show MemorySettings;
 import 'ai_provider_router_test.dart' show MemoryCredentials;
+import 'qa_fonts.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUpAll(sqfliteFfiInit);
+  setUpAll(loadQaFonts);
   testWidgets(
     'all business routes use real local SQLite without a server URL or pairing',
     (tester) async {
@@ -68,40 +70,104 @@ void main() {
           child: const ShelfSightApp(),
         ),
       );
-      await tester.pumpAndSettle();
+      for (var i = 0; i < 8; i++) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 25)),
+        );
+        await tester.pump(const Duration(milliseconds: 50));
+      }
       final router = GoRouter.of(tester.element(find.byType(DashboardScreen)));
+      final semantics = tester.ensureSemantics();
       expect(find.text('Route test store'), findsWidgets);
       // Auth and pairing routes correctly bypass to home for a local profile.
       for (final path in ['/login', '/connect']) {
         router.go(path);
-        await tester.pumpAndSettle();
-        expect(router.routeInformationProvider.value.uri.path, '/home');
-      }
-      for (final path in [
-        '/setup',
-        '/shelf/$shelf',
-        '/product/$shelf',
-        '/map',
-        '/analytics',
-        '/monitor',
-        '/scan/$shelf',
-        '/settings',
-        '/recommendations',
-      ]) {
-        router.go(path);
         for (var i = 0; i < 8; i++) {
-          await tester.runAsync(() async {
-            await Future<void>.delayed(const Duration(milliseconds: 20));
-          });
+          await tester.runAsync(
+            () => Future<void>.delayed(const Duration(milliseconds: 25)),
+          );
           await tester.pump(const Duration(milliseconds: 50));
         }
-        expect(router.routeInformationProvider.value.uri.path, path);
-        expect(tester.takeException(), isNull, reason: path);
+        expect(router.routeInformationProvider.value.uri.path, '/home');
+      }
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+      addTearDown(tester.view.resetViewInsets);
+      for (final viewport in [
+        (const Size(320, 640), 1.0),
+        (const Size(568, 320), 2.0),
+      ]) {
+        tester.view.physicalSize = viewport.$1;
+        tester.platformDispatcher.textScaleFactorTestValue = viewport.$2;
+        for (final path in [
+          '/home',
+          '/setup',
+          '/shelf/$shelf',
+          '/product/$shelf',
+          '/map',
+          '/analytics',
+          '/monitor',
+          '/scan/$shelf',
+          '/settings',
+          '/recommendations',
+        ]) {
+          router.go(path);
+          for (var i = 0; i < 8; i++) {
+            await tester.runAsync(() async {
+              await Future<void>.delayed(const Duration(milliseconds: 20));
+            });
+            await tester.pump(const Duration(milliseconds: 50));
+          }
+          expect(router.routeInformationProvider.value.uri.path, path);
+          await tester.pump(const Duration(milliseconds: 350));
+          expect(tester.takeException(), isNull, reason: '$path at $viewport');
+          await expectLater(tester, meetsGuideline(labeledTapTargetGuideline));
+          await expectLater(tester, meetsGuideline(androidTapTargetGuideline));
+          if (viewport.$2 == 1 &&
+              ['/home', '/monitor', '/map', '/scan/$shelf'].contains(path)) {
+            final frameName =
+                path.startsWith('/scan/') ? 'scan' : path.substring(1);
+            await expectLater(
+              find.byType(MaterialApp),
+              matchesGoldenFile('goldens/mobile_$frameName.png'),
+            );
+          }
+          final scroll =
+              find
+                  .byWidgetPredicate(
+                    (w) =>
+                        w is Scrollable &&
+                        w.axisDirection == AxisDirection.down,
+                  )
+                  .hitTestable();
+          if (scroll.evaluate().isNotEmpty) {
+            await tester.drag(scroll.first, const Offset(0, -350));
+            await tester.pump(const Duration(milliseconds: 300));
+            expect(
+              tester.takeException(),
+              isNull,
+              reason: '$path scrolled at $viewport',
+            );
+          }
+          if (path == '/product/$shelf' ||
+              path == '/setup' ||
+              path == '/settings') {
+            tester.view.viewInsets = const FakeViewPadding(bottom: 120);
+            await tester.pump(const Duration(milliseconds: 200));
+            expect(
+              tester.takeException(),
+              isNull,
+              reason: '$path keyboard at $viewport',
+            );
+            tester.view.resetViewInsets();
+            await tester.pump(const Duration(milliseconds: 200));
+          }
+        }
       }
       expect(api.networkCalls, 0);
       expect(app.isStandalone, true);
       expect(app.isOffline, false);
       await tester.pumpWidget(const SizedBox.shrink());
+      semantics.dispose();
       await tester.runAsync(() async {
         await repo.close();
         await dir.delete(recursive: true);

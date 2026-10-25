@@ -98,7 +98,7 @@ void main() {
         250,
         scrollable: scrollable,
       );
-      await tester.tap(find.text('Auto (available configured provider)'));
+      await tester.tap(find.text('Auto (Laya Router)'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('OpenRouter').last);
       await tester.pumpAndSettle();

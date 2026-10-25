@@ -42,11 +42,43 @@ void main() {
     }),
   );
   test(
+    'version one floor migration preserves feet and creates canonical metres',
+    () async {
+      final store = await create();
+      await repo.patch('/stores/${store['id']}', {'unit': 'ft'});
+      final before =
+          (await repo.get('/stores/${store['id']}/snapshot'))['floors'].single
+              as Map;
+      await repo.close();
+      final db = await databaseFactoryFfi.openDatabase('${dir.path}/ledger.db');
+      final legacy =
+          Map<String, dynamic>.from(before)
+            ..remove('width_m')
+            ..remove('length_m');
+      await db.update(
+        'floors',
+        {'data': jsonEncode(legacy)},
+        where: 'id=?',
+        whereArgs: [before['id']],
+      );
+      await db.setVersion(1);
+      await db.close();
+      await repo.open('owner-a');
+      final after =
+          (await repo.get('/stores/${store['id']}/snapshot'))['floors'].single;
+      expect(after['width'], before['width']);
+      expect(after['width_m'], closeTo(10, 0.000001));
+      expect(await repo.ledger(store['id']), isEmpty);
+    },
+  );
+  test(
     'real SQLite persists setup, product, stock, calibration and decisions across restart',
     () async {
       final store = await create();
       final id = store['id'];
       final snap = await repo.get('/stores/$id/snapshot');
+      expect(snap['floors'].single['width_m'], 10.0);
+      expect(snap['floors'].single['length_m'], 10.0);
       final shelf = snap['shelves'].single;
       final product = await repo.post('/stores/$id/products', {
         'name': 'User product',
@@ -117,6 +149,10 @@ void main() {
         throwsException,
       );
       expect((await repo.get('/stores/$id/events'))['items'], hasLength(1));
+      expect(
+        (await repo.get('/stores/$id/events'))['items'].single['event_type'],
+        'INITIAL_STOCK',
+      );
       await expectLater(
         repo.patch('/items/missing', {'quantity': 1}),
         throwsException,
@@ -221,6 +257,77 @@ void main() {
         "SELECT name FROM sqlite_master WHERE type='table'",
       )).map((r) => r['name']);
       expect(names, containsAll(StandaloneMobileRepository.tables));
+    },
+  );
+  test(
+    'planogram swaps are atomic, stock is typed, and event citations are store scoped',
+    () async {
+      final store = await create(), id = store['id'];
+      final shelf = (await repo.get('/stores/$id/snapshot'))['shelves'].single;
+      final p = await repo.post('/stores/$id/products', {
+        'name': 'Verified test product',
+      });
+      final first = await repo.post('/shelves/${shelf['id']}/items', {
+        'product_id': p['id'],
+        'row': 1,
+        'slot': 1,
+        'quantity': 2,
+      });
+      final second = await repo.post('/shelves/${shelf['id']}/items', {
+        'product_id': p['id'],
+        'row': 1,
+        'slot': 2,
+        'quantity': 3,
+      });
+      await repo.post('/shelves/${shelf['id']}/planogram', {
+        'items': [
+          {'id': first['id'], 'row': 1, 'slot': 2, 'quantity': 2},
+          {'id': second['id'], 'row': 1, 'slot': 1, 'quantity': 3},
+        ],
+      });
+      final items = (await repo.get('/stores/$id/snapshot'))['items'] as List;
+      expect(items.firstWhere((i) => i['id'] == first['id'])['slot'], 2);
+      final ledger = await repo.ledger(id);
+      expect(ledger, hasLength(4));
+      expect(ledger.first['event_type'], 'INITIAL_STOCK');
+      expect(ledger.last['slot'], 1);
+      expect(
+        (await repo.event(id, ledger.first['id']))['id'],
+        ledger.first['id'],
+      );
+      final other = await create();
+      await expectLater(
+        repo.event(other['id'], ledger.first['id']),
+        throwsException,
+      );
+      await expectLater(
+        repo.post('/shelves/${shelf['id']}/planogram', {
+          'items': [
+            {'id': first['id'], 'row': 1, 'slot': 1, 'quantity': 2},
+          ],
+        }),
+        throwsException,
+      );
+      expect(await repo.ledger(id), hasLength(4));
+      await repo.patch('/stores/$id', {'unit': 'ft'});
+      expect(
+        (await repo.get('/stores/$id/snapshot'))['floors'].single['width_m'],
+        10.0,
+      );
+    },
+  );
+  test(
+    'full data wipe removes every store for this owner and preserves other owners',
+    () async {
+      await create();
+      await create();
+      await repo.open('owner-b');
+      final other = await create();
+      await repo.open('owner-a');
+      await repo.delete('/stores');
+      expect((await repo.get('/stores'))['items'], isEmpty);
+      await repo.open('owner-b');
+      expect((await repo.get('/stores'))['items'].single['id'], other['id']);
     },
   );
 }

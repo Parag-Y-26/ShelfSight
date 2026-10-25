@@ -15,6 +15,8 @@ import '../core/app_controller.dart';
 import '../core/strings.dart';
 import '../core/theme.dart';
 import '../core/temp_photo.dart';
+import '../vision/local_barcode_reader.dart';
+import '../vision/frame_encoder.dart';
 import '../widgets/shared.dart';
 
 class ProductScreen extends ConsumerStatefulWidget {
@@ -63,6 +65,16 @@ class _ProductScreenState extends ConsumerState<ProductScreen>
   int? _priceWithUnknownCurrency;
   int _cameraGeneration = 0;
   int _lookupGeneration = 0;
+  LocalBarcodeReader? _liveReader;
+  bool _readingCode = false;
+  int _lastCodeFrame = 0;
+  Future<void> _closeReader() async {
+    final reader = _liveReader;
+    _liveReader = null;
+    try {
+      await reader?.close();
+    } catch (_) {}
+  }
 
   @override
   void initState() {
@@ -142,6 +154,7 @@ class _ProductScreenState extends ConsumerState<ProductScreen>
 
   @override
   void dispose() {
+    unawaited(_closeReader());
     WidgetsBinding.instance.removeObserver(this);
     _cameraGeneration++;
     unawaited(_camera?.dispose());
@@ -182,6 +195,7 @@ class _ProductScreenState extends ConsumerState<ProductScreen>
         state == AppLifecycleState.paused) {
       _resumeCamera = _resumeCamera || _camera != null || _cameraLoading;
       _cameraGeneration++;
+      unawaited(_closeReader());
       final camera = _camera;
       if (mounted) {
         setState(() {
@@ -215,6 +229,10 @@ class _ProductScreenState extends ConsumerState<ProductScreen>
         back.isEmpty ? cameras.first : back.first,
         ResolutionPreset.medium,
         enableAudio: false,
+        imageFormatGroup:
+            defaultTargetPlatform == TargetPlatform.iOS
+                ? ImageFormatGroup.bgra8888
+                : ImageFormatGroup.yuv420,
       );
       await next.initialize();
       if (!mounted || generation != _cameraGeneration) {
@@ -227,7 +245,16 @@ class _ProductScreenState extends ConsumerState<ProductScreen>
         _cameraLoading = false;
       });
       await old?.dispose();
+      if (!kIsWeb &&
+          (defaultTargetPlatform == TargetPlatform.android ||
+              defaultTargetPlatform == TargetPlatform.iOS)) {
+        await _closeReader();
+        _liveReader = LocalBarcodeReader();
+        await next.startImageStream(_onBarcodeFrame);
+      }
     } catch (_) {
+      if (identical(_camera, next)) _camera = null;
+      await _closeReader();
       await next?.dispose();
       if (mounted && generation == _cameraGeneration) {
         setState(() {
@@ -249,6 +276,9 @@ class _ProductScreenState extends ConsumerState<ProductScreen>
     BarcodeScanner? scanner;
     String? capturedPath;
     try {
+      _cameraGeneration++;
+      if (camera.value.isStreamingImages) await camera.stopImageStream();
+      await _closeReader();
       final photo = await camera.takePicture();
       capturedPath = photo.path;
       if (!mounted) {
@@ -346,6 +376,98 @@ class _ProductScreenState extends ConsumerState<ProductScreen>
         unawaited(_openCamera());
       }
     }
+  }
+
+  void _onBarcodeFrame(CameraImage image) {
+    final camera = _camera,
+        reader = _liveReader,
+        app = ref.read(appControllerProvider);
+    final fps = app.effectiveSettings()['monitoring_sample_fps'] as num;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (_busy ||
+        _readingCode ||
+        camera == null ||
+        reader == null ||
+        now - _lastCodeFrame < 1000 / fps) {
+      return;
+    }
+    _lastCodeFrame = now;
+    _readingCode = true;
+    final generation = _cameraGeneration, identity = app.identityGeneration;
+    final frame = RawCameraFrame(
+      width: image.width,
+      height: image.height,
+      planes: [
+        for (final plane in image.planes)
+          FramePlane(
+            bytes: Uint8List.fromList(plane.bytes),
+            rowStride: plane.bytesPerRow,
+            pixelStride: plane.bytesPerPixel ?? 1,
+          ),
+      ],
+      format: image.format.group.name,
+      rotation: uprightRotation(
+        camera.description.sensorOrientation,
+        camera.value.deviceOrientation.name,
+      ),
+      maxDimension:
+          (app.effectiveSettings()['frame_max_dimension'] as num).toInt(),
+      orientation: camera.value.deviceOrientation.name,
+      capturedAtMs: now,
+    );
+    Future<void> read() async {
+      try {
+        final codes = await reader.read(frame);
+        if (!mounted ||
+            generation != _cameraGeneration ||
+            identity != app.identityGeneration ||
+            codes.isEmpty) {
+          return;
+        }
+        if (camera.value.isStreamingImages) await camera.stopImageStream();
+        String? code = codes.length == 1 ? codes.single : null;
+        if (codes.length > 1 && mounted) {
+          code = await showDialog<String>(
+            context: context,
+            builder:
+                (dialog) => SimpleDialog(
+                  title: Text(tr(context, 'rsChooseBarcode')),
+                  children: [
+                    for (final value in codes)
+                      SimpleDialogOption(
+                        onPressed: () => Navigator.pop(dialog, value),
+                        child: Text(value),
+                      ),
+                  ],
+                ),
+          );
+        }
+        if (!mounted ||
+            generation != _cameraGeneration ||
+            identity != app.identityGeneration) {
+          return;
+        }
+        if (code == null) {
+          await camera.startImageStream(_onBarcodeFrame);
+          return;
+        }
+        _cameraGeneration++;
+        setState(() => _camera = null);
+        await camera.dispose();
+        await _closeReader();
+        if (!mounted || identity != app.identityGeneration) return;
+        _barcode.text = code;
+        await _lookup();
+      } catch (_) {
+        if (mounted && generation == _cameraGeneration) {
+          setState(() => _statusKey = 'rsNoBarcode');
+        }
+      } finally {
+        _readingCode = false;
+      }
+    }
+
+    unawaited(read());
   }
 
   int _fractionDigits() {
@@ -762,6 +884,7 @@ class _ProductScreenState extends ConsumerState<ProductScreen>
                       child: CircularProgressIndicator(),
                     )
                   else if (camera != null && camera.value.isInitialized) ...[
+                    Text(tr(context, 'liveBarcode')),
                     ClipRRect(
                       borderRadius: BorderRadius.circular(Tokens.md),
                       child: AspectRatio(

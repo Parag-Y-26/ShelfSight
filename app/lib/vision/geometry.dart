@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 import 'dart:ui';
+import 'polygon.dart';
 
 double? finiteNumber(Object? value) {
   final number = value is num ? value.toDouble() : double.tryParse('$value');
@@ -8,9 +9,13 @@ double? finiteNumber(Object? value) {
 
 /// A shopper interaction zone in the upright, uncropped camera image.
 class CameraZone {
-  const CameraZone({required this.shelfId, required this.rect});
+  const CameraZone({required this.shelfId, required this.rect, this.polygon});
   final String shelfId;
   final Rect rect;
+  final List<Offset>? polygon;
+  List<Offset> get vertices =>
+      polygon ??
+      [rect.topLeft, rect.topRight, rect.bottomRight, rect.bottomLeft];
 
   bool get valid =>
       shelfId.isNotEmpty &&
@@ -23,9 +28,19 @@ class CameraZone {
       rect.width > 0 &&
       rect.height > 0 &&
       rect.right <= 1 &&
-      rect.bottom <= 1;
+      rect.bottom <= 1 &&
+      (polygon == null ||
+          (validConvexPolygon(vertices) &&
+              vertices.every(
+                (p) =>
+                    p.dx >= rect.left - 1e-10 &&
+                    p.dx <= rect.right + 1e-10 &&
+                    p.dy >= rect.top - 1e-10 &&
+                    p.dy <= rect.bottom + 1e-10,
+              )));
 
-  bool overlaps(CameraZone other) => rect.overlaps(other.rect);
+  bool overlaps(CameraZone other) => polygonsOverlap(vertices, other.vertices);
+  bool contains(Offset point) => polygonContains(vertices, point);
 
   Map<String, dynamic> toJson() => {
     'shelf_id': shelfId,
@@ -33,6 +48,10 @@ class CameraZone {
     'y': rect.top,
     'width': rect.width,
     'height': rect.height,
+    if (polygon != null)
+      'polygon': [
+        for (final p in polygon!) [p.dx, p.dy],
+      ],
   };
 
   static CameraZone? fromJson(Map<String, dynamic> json) {
@@ -44,7 +63,27 @@ class CameraZone {
     if (x == null || y == null || w == null || h == null || id is! String) {
       return null;
     }
-    final zone = CameraZone(shelfId: id, rect: Rect.fromLTWH(x, y, w, h));
+    List<Offset>? polygon;
+    if (json['polygon'] != null) {
+      final raw = json['polygon'];
+      if (raw is! List) return null;
+      polygon = [];
+      for (final p in raw) {
+        if (p is! List ||
+            p.length != 2 ||
+            finiteNumber(p[0]) == null ||
+            finiteNumber(p[1]) == null) {
+          return null;
+        }
+        polygon.add(Offset(finiteNumber(p[0])!, finiteNumber(p[1])!));
+      }
+      if (!validConvexPolygon(polygon)) return null;
+    }
+    final zone = CameraZone(
+      shelfId: id,
+      rect: Rect.fromLTWH(x, y, w, h),
+      polygon: polygon == null ? null : List.unmodifiable(polygon),
+    );
     return zone.valid ? zone : null;
   }
 }
@@ -111,12 +150,14 @@ class ShelfGeometry {
 
   ShelfGeometry moved(Offset delta, double floorWidth, double floorLength) =>
       ShelfGeometry(
-        x: (x + delta.dx)
-            .clamp(0, math.max(0, floorWidth - footprintWidth))
-            .toDouble(),
-        y: (y + delta.dy)
-            .clamp(0, math.max(0, floorLength - footprintLength))
-            .toDouble(),
+        x:
+            (x + delta.dx)
+                .clamp(0, math.max(0, floorWidth - footprintWidth))
+                .toDouble(),
+        y:
+            (y + delta.dy)
+                .clamp(0, math.max(0, floorLength - footprintLength))
+                .toDouble(),
         width: width,
         length: length,
         rotation: rotation,
@@ -137,12 +178,14 @@ class ShelfGeometry {
     final left = corner == 0 || corner == 3;
     final top = corner == 0 || corner == 1;
     final epsilon = math.min(fw, fl) * 0.000001;
-    var dx = (left ? anchor.dx - point.dx : point.dx - anchor.dx)
-        .clamp(epsilon, left ? anchor.dx : fw - anchor.dx)
-        .toDouble();
-    var dy = (top ? anchor.dy - point.dy : point.dy - anchor.dy)
-        .clamp(epsilon, top ? anchor.dy : fl - anchor.dy)
-        .toDouble();
+    var dx =
+        (left ? anchor.dx - point.dx : point.dx - anchor.dx)
+            .clamp(epsilon, left ? anchor.dx : fw - anchor.dx)
+            .toDouble();
+    var dy =
+        (top ? anchor.dy - point.dy : point.dy - anchor.dy)
+            .clamp(epsilon, top ? anchor.dy : fl - anchor.dy)
+            .toDouble();
     if (shape == 'square') {
       dx = dy = math.min(dx, dy);
     }

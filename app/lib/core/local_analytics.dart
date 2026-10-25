@@ -51,6 +51,9 @@ Map<String, dynamic> summarizeLocal(
   final coverage = <(double, double)>[];
   final exposure = <String, List<(double, double)>>{};
   final inventory = <String, Map<String, dynamic>>{};
+  final samples = <double>[];
+  final shelfSamples = <String, List<double>>{};
+  final placements = <String, List<Map<String, dynamic>>>{};
   var visits = 0;
   var dwell = 0.0;
   for (final e in events) {
@@ -63,6 +66,8 @@ Map<String, dynamic> summarizeLocal(
       if (kind == 'visit') {
         visits++;
         dwell += right - left;
+        samples.add(right - left);
+        (shelfSamples[e['shelf_id']] ??= []).add(right - left);
         final row = rows[e['shelf_id']];
         if (row != null) {
           row['visits'] = (row['visits'] as int) + 1;
@@ -77,6 +82,7 @@ Map<String, dynamic> summarizeLocal(
     } else if (kind == 'inventory_adjustment' &&
         time(e['server_timestamp']) < b) {
       final id = e['item_id'] as String;
+      (placements[id] ??= []).add(e);
       inventory[id] ??= {
         'item_id': id,
         'shelf_id': e['shelf_id'],
@@ -90,6 +96,8 @@ Map<String, dynamic> summarizeLocal(
         'price_minor': e['price_minor'],
         'currency': e['currency'],
         'last_corrected_at': e['server_timestamp'],
+        'row': e['row'],
+        'slot': e['slot'],
       });
     }
   }
@@ -97,7 +105,48 @@ Map<String, dynamic> summarizeLocal(
     rows[e.key]?['exposure_seconds'] = intervalUnion(e.value);
   }
   final runtime = RuntimeConfiguration(config);
+  double? median(List<double> values) {
+    if (values.isEmpty) return null;
+    final sorted = [...values]..sort();
+    final mid = sorted.length ~/ 2;
+    return sorted.length.isOdd
+        ? sorted[mid]
+        : (sorted[mid - 1] + sorted[mid]) / 2;
+  }
+
+  for (final row in rows.values) {
+    final values = shelfSamples[row['shelf_id']] ?? [];
+    row['mean_dwell_seconds'] =
+        values.isEmpty ? null : values.reduce((a, b) => a + b) / values.length;
+    row['median_dwell_seconds'] = median(values);
+  }
   for (final item in inventory.values) {
+    final history = placements[item['item_id']]!;
+    double? covered;
+    for (var i = 0; i < history.length; i++) {
+      final e = history[i];
+      if (item['row'] is! num ||
+          item['slot'] is! num ||
+          e['row'] != item['row'] ||
+          e['slot'] != item['slot']) {
+        continue;
+      }
+      final left = math.max(a, time(e['server_timestamp'])),
+          right =
+              i + 1 < history.length
+                  ? math.min(b, time(history[i + 1]['server_timestamp']))
+                  : b;
+      if (right <= left) continue;
+      covered ??= 0;
+      covered += intervalUnion([
+        for (final interval in exposure[e['shelf_id']] ?? <(double, double)>[])
+          if (math.min(right, interval.$2) > math.max(left, interval.$1))
+            (math.max(left, interval.$1), math.min(right, interval.$2)),
+      ]);
+    }
+    item['slot_exposure_seconds'] = covered;
+    item['slot_exposure_basis'] =
+        'calibrated_shelf_zone_coverage_while_slot_recorded';
     item['low_stock_threshold'] =
         runtime.resolve(
           device: Map<String, dynamic>.from(
@@ -120,6 +169,8 @@ Map<String, dynamic> summarizeLocal(
     'coverage_seconds': intervalUnion(coverage),
     'visits': visits,
     'total_dwell_seconds': dwell,
+    'mean_dwell_seconds': samples.isEmpty ? null : dwell / samples.length,
+    'median_dwell_seconds': median(samples),
     'shelves': ranked,
     'inventory': inventory.values.toList(),
     'capabilities': {
@@ -148,6 +199,20 @@ String exportLocalCsv(Map<String, dynamic> summary) {
     ],
     ['visits', '', summary['visits'], 'visits', summary['generated_at']],
     [
+      'mean_dwell',
+      '',
+      summary['mean_dwell_seconds'],
+      'seconds',
+      summary['generated_at'],
+    ],
+    [
+      'median_dwell',
+      '',
+      summary['median_dwell_seconds'],
+      'seconds',
+      summary['generated_at'],
+    ],
+    [
       'dwell',
       '',
       summary['total_dwell_seconds'],
@@ -165,6 +230,14 @@ String exportLocalCsv(Map<String, dynamic> summary) {
         i['name'],
         i['quantity'],
         'units',
+        i['last_corrected_at'],
+      ],
+    for (final i in summary['inventory'])
+      [
+        'recorded_slot_zone_coverage',
+        i['name'],
+        i['slot_exposure_seconds'],
+        'seconds',
         i['last_corrected_at'],
       ],
   ];

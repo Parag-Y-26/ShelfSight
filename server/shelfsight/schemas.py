@@ -7,6 +7,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from .geometry import valid_polygon, zones_overlap
+
 Name = Annotated[str, Field(min_length=1, max_length=200)]
 ID = Annotated[str, Field(min_length=1, max_length=128)]
 Positive = Annotated[float, Field(gt=0, le=1_000_000)]
@@ -120,17 +122,47 @@ class ItemPatch(Input):
     quantity: Annotated[int, Field(strict=True, ge=0, le=10**9)] | None = None
 
 
+class PlanogramItem(Input):
+    id: ID
+    row: Annotated[int, Field(strict=True, ge=1, le=1000)]
+    slot: Annotated[int, Field(strict=True, ge=1, le=10000)]
+    quantity: Annotated[int, Field(strict=True, ge=0, le=10**9)]
+
+
+class PlanogramInput(Input):
+    items: Annotated[list[PlanogramItem], Field(max_length=10000)]
+    rows: Annotated[int, Field(strict=True, ge=1, le=1000)] | None = None
+
+
 class Zone(Input):
     shelf_id: ID
     x: Annotated[float, Field(ge=0, le=1)]
     y: Annotated[float, Field(ge=0, le=1)]
     width: Annotated[float, Field(gt=0, le=1)]
     height: Annotated[float, Field(gt=0, le=1)]
+    polygon: (
+        Annotated[
+            list[
+                Annotated[list[Annotated[float, Field(ge=0, le=1)]], Field(min_length=2, max_length=2)]
+            ],
+            Field(min_length=3, max_length=32),
+        ]
+        | None
+    ) = None
 
     @model_validator(mode="after")
     def inside_image(self):
         if self.x + self.width > 1.00000001 or self.y + self.height > 1.00000001:
             raise ValueError("Zone must fit within normalized image coordinates")
+        if self.polygon is not None and (
+            not valid_polygon(self.polygon)
+            or any(
+                not self.x - 1e-10 <= p[0] <= self.x + self.width + 1e-10
+                or not self.y - 1e-10 <= p[1] <= self.y + self.height + 1e-10
+                for p in self.polygon
+            )
+        ):
+            raise ValueError("Use a simple convex polygon inside its normalized bounds")
         return self
 
 
@@ -146,12 +178,7 @@ class CalibrationInput(Input):
             raise ValueError("A shelf can have only one camera zone per calibration")
         for i, a in enumerate(self.zones):
             for b in self.zones[i + 1 :]:
-                if (
-                    a.x < b.x + b.width
-                    and b.x < a.x + a.width
-                    and a.y < b.y + b.height
-                    and b.y < a.y + a.height
-                ):
+                if zones_overlap(a.model_dump(), b.model_dump()):
                     raise ValueError("Camera interaction zones cannot overlap")
         return self
 

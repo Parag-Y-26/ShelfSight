@@ -82,7 +82,7 @@ class StandaloneMobileRepository implements ShelfSightRepository {
     final db = await _factory.openDatabase(
       path,
       options: OpenDatabaseOptions(
-        version: 1,
+        version: 2,
         onConfigure: (db) async {
           await db.execute('PRAGMA foreign_keys=ON');
         },
@@ -104,6 +104,31 @@ class StandaloneMobileRepository implements ShelfSightRepository {
             await db.execute(
               "CREATE TRIGGER ${table}_immutable BEFORE UPDATE ON $table BEGIN SELECT RAISE(ABORT,'Observation events are append-only'); END",
             );
+          }
+        },
+        onUpgrade: (db, oldVersion, newVersion) async {
+          if (oldVersion < 2) {
+            final stores = {
+              for (final row in await db.query('stores'))
+                row['id']: jsonDecode(row['data'] as String) as Map,
+            };
+            for (final row in await db.query('floors')) {
+              final floor = Map<String, dynamic>.from(
+                jsonDecode(row['data'] as String) as Map,
+              );
+              final scale =
+                  stores[row['store_id']]?['unit'] == 'ft' ? 0.3048 : 1.0;
+              floor.addAll({
+                'width_m': (floor['width'] as num) * scale,
+                'length_m': (floor['length'] as num) * scale,
+              });
+              await db.update(
+                'floors',
+                {'data': jsonEncode(floor)},
+                where: 'id=?',
+                whereArgs: [row['id']],
+              );
+            }
           }
         },
       ),
@@ -155,6 +180,7 @@ class StandaloneMobileRepository implements ShelfSightRepository {
     String table,
     String id,
   ) async {
+    if (_owner == null) throw const ApiFailure('sessionExpired');
     final rows = await db.query(
       table,
       where: 'id=? AND owner=?',
@@ -176,6 +202,15 @@ class StandaloneMobileRepository implements ShelfSightRepository {
     Map<String, dynamic> values, {
     String? parent,
   }) async {
+    if (table == 'floors') {
+      final store = await _one(db, 'stores', storeId), scale = 1.0;
+      final meters = store['unit'] == 'ft' ? 0.3048 : scale;
+      values = {
+        ...values,
+        'width_m': (values['width'] as num) * meters,
+        'length_m': (values['length'] as num) * meters,
+      };
+    }
     final id = newId();
     if (table == 'stores') storeId = id;
     final data = {
@@ -399,6 +434,10 @@ class StandaloneMobileRepository implements ShelfSightRepository {
       'delta': (item['quantity'] as num) - previous,
       'reason': reason,
       'provenance': 'user_recorded_inventory',
+      'event_type':
+          reason == 'initial_quantity' ? 'INITIAL_STOCK' : 'STOCK_CORRECTION',
+      'row': item['row'],
+      'slot': item['slot'],
     });
   }
 
@@ -653,6 +692,62 @@ class StandaloneMobileRepository implements ShelfSightRepository {
         await _inventory(tx, item, 0, 'initial_quantity');
         return item;
       }
+      if (parts.length == 3 &&
+          parts[0] == 'shelves' &&
+          parts[2] == 'planogram') {
+        final shelf = await _one(tx, 'shelves', parts[1]);
+        if (d['items'] is! List) _invalid();
+        final rowLimit = d['rows'] ?? shelf['rows'];
+        if (d['rows'] != null) {
+          _num(d['rows'], min: 1, max: 1000, integer: true);
+        }
+        final existing =
+            (await _list(
+              tx,
+              'shelf_items',
+              shelf['store_id'],
+            )).where((i) => i['shelf_id'] == shelf['id']).toList();
+        final changes = <String, Map<String, dynamic>>{};
+        for (final raw in d['items']) {
+          final value = _body(raw), id = value['id'];
+          if (id is! String ||
+              changes.containsKey(id) ||
+              !existing.any((i) => i['id'] == id)) {
+            _invalid();
+          }
+          if (value.keys.any(
+            (k) => !['id', 'row', 'slot', 'quantity'].contains(k),
+          )) {
+            _invalid();
+          }
+          _num(value['row'], min: 1, max: 1000, integer: true);
+          _num(value['slot'], min: 1, max: 10000, integer: true);
+          _num(value['quantity'], max: 1000000000, integer: true);
+          if (rowLimit != null && value['row'] > rowLimit) _invalid();
+          changes[id] = value;
+        }
+        final occupied = <String>{};
+        for (final old in existing) {
+          final v = changes[old['id']] ?? old;
+          if (rowLimit != null && v['row'] > rowLimit) _invalid();
+          if (!occupied.add('${v['row']}:${v['slot']}')) _invalid();
+        }
+        if (d['rows'] != null) {
+          await _update(tx, 'shelves', shelf['id'], {'rows': d['rows']});
+        }
+        for (final old in existing) {
+          final value = changes[old['id']];
+          if (value == null) continue;
+          if (['row', 'slot', 'quantity'].every((k) => old[k] == value[k])) {
+            continue;
+          }
+          final updated = await _update(tx, 'shelf_items', old['id'], {
+            for (final key in ['row', 'slot', 'quantity']) key: value[key],
+          });
+          await _inventory(tx, updated, old['quantity'], 'user_correction');
+        }
+        return {'items': await _list(tx, 'shelf_items', shelf['store_id'])};
+      }
       if (parts.length == 3 && parts[0] == 'monitoring' && parts[2] == 'stop') {
         final s = await _one(tx, 'monitoring_sessions', parts[1]);
         return _finishSession(tx, s, incomplete: true);
@@ -739,6 +834,12 @@ class StandaloneMobileRepository implements ShelfSightRepository {
       }
       if (table == 'floors') {
         _floor(merged);
+        final store = await _one(tx, 'stores', previous['store_id']);
+        final scale = store['unit'] == 'ft' ? 0.3048 : 1.0;
+        d.addAll({
+          'width_m': (merged['width'] as num) * scale,
+          'length_m': (merged['length'] as num) * scale,
+        });
         for (final s in await _list(tx, 'shelves', previous['store_id'])) {
           if (s['floor_id'] == id) _geometry(s, merged);
         }
@@ -805,6 +906,14 @@ class StandaloneMobileRepository implements ShelfSightRepository {
   @override
   Future<dynamic> delete(String path) async {
     final parts = _path(path);
+    if (parts.length == 1 && parts[0] == 'stores') {
+      final db = _database, owner = _owner, generation = _generation;
+      await db.transaction((tx) async {
+        _checkIdentity(generation, owner);
+        await tx.delete('stores', where: 'owner=?', whereArgs: [owner]);
+      });
+      return null;
+    }
     if (parts.length != 2 || parts[0] != 'stores') _invalid();
     final db = _database, generation = _generation, owner = _owner;
     await db.transaction((tx) async {
@@ -838,6 +947,28 @@ class StandaloneMobileRepository implements ShelfSightRepository {
     final result = await _list(db, 'autonomous_decisions', storeId);
     _checkIdentity(generation, owner);
     return result;
+  }
+
+  Future<Map<String, dynamic>> event(String storeId, String id) async {
+    final db = _database, generation = _generation, owner = _owner;
+    await _one(db, 'stores', storeId);
+    _checkIdentity(generation, owner);
+    for (final table in ['inventory_events', 'visit_events']) {
+      final rows = await db.query(
+        table,
+        columns: ['data'],
+        where: 'id=? AND owner=? AND store_id=?',
+        whereArgs: [id, owner, storeId],
+        limit: 1,
+      );
+      _checkIdentity(generation, owner);
+      if (rows.isNotEmpty) {
+        return Map<String, dynamic>.from(
+          jsonDecode(rows.single['data'] as String) as Map,
+        );
+      }
+    }
+    throw const ApiFailure('eventUnavailable');
   }
 
   Future<List<Map<String, dynamic>>> recordFrame(

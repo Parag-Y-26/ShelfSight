@@ -110,8 +110,120 @@ class AppController extends ChangeNotifier {
   final AiCredentials aiCredentials;
   AiProviderRouter? _aiRouter;
   final bool _injectedAiRouter;
-  AiProviderRouter get aiRouter =>
-      _aiRouter ??= AiProviderRouter(config, credentials: aiCredentials);
+  AiProviderRouter get aiRouter {
+    final router =
+        _aiRouter ??= AiProviderRouter(config, credentials: aiCredentials);
+    router.onResult ??= () {
+      aiRoutingRevision++;
+      notifyListeners();
+    };
+    return router;
+  }
+
+  int aiSettingsRevision = 0, ledgerRevision = 0, aiRoutingRevision = 0;
+  Map<String, dynamic>? lastShelfScan;
+  void recordShelfScan({
+    required String provider,
+    String? model,
+    String? shelfId,
+  }) {
+    lastShelfScan = {
+      'provider': provider,
+      'model': model,
+      'shelf_id': shelfId,
+      'store_id': store?['id'],
+      'backend': repository.identity,
+    };
+    notifyListeners();
+  }
+
+  void aiSettingsChanged() {
+    aiSettingsRevision++;
+    notifyListeners();
+  }
+
+  void ledgerChanged() {
+    ledgerRevision++;
+    notifyListeners();
+  }
+
+  Timer? _frameFreshness;
+  DateTime? lastMonitoringFrame;
+  bool get monitoringLive =>
+      monitoringActive &&
+      lastMonitoringFrame != null &&
+      DateTime.now().toUtc().difference(lastMonitoringFrame!).inMilliseconds <
+          ((config['limits']?['max_frame_age_seconds'] as num?)?.toDouble() ??
+                  0) *
+              1000;
+  bool _disposed = false;
+  void framesStopped() {
+    final changed = lastMonitoringFrame != null;
+    lastMonitoringFrame = null;
+    _frameFreshness?.cancel();
+    if (changed) {
+      Future.microtask(() {
+        if (!_disposed) notifyListeners();
+      });
+    }
+  }
+
+  void frameProcessed() {
+    if (!monitoringActive) return;
+    lastMonitoringFrame = DateTime.now().toUtc();
+    _frameFreshness?.cancel();
+    final seconds =
+        (config['limits']?['max_frame_age_seconds'] as num?)?.toDouble();
+    if (seconds != null) {
+      _frameFreshness = Timer(
+        Duration(milliseconds: (seconds * 1000).ceil()),
+        () {
+          lastMonitoringFrame = null;
+          notifyListeners();
+        },
+      );
+    }
+    notifyListeners();
+  }
+
+  Future<List<Map<String, dynamic>>> recordedEvents() async {
+    final id = store?['id']?.toString(), generation = _generation;
+    if (id == null) return [];
+    final List<Map<String, dynamic>> events;
+    final limit =
+        (config['ai']?['limits']?['max_decision_events'] as num?)?.toInt() ??
+        10000;
+    if (isStandalone) {
+      events = await localRepository.ledger(id, limit: limit);
+    } else if (!isOffline && paired) {
+      final data = await repository.get(
+        '/stores/$id/events',
+        query: {'limit': limit},
+      );
+      events = _list(data is Map ? data['items'] : null);
+    } else {
+      events = await cache.readEvents(id, limit: limit);
+    }
+    if (!_current(generation) || store?['id'] != id) {
+      throw const ApiFailure('sessionExpired');
+    }
+    return events;
+  }
+
+  Future<Map<String, dynamic>> recordedEvent(String eventId) async {
+    final id = store?['id']?.toString(), generation = _generation;
+    if (id == null) throw const ApiFailure('eventUnavailable');
+    final data =
+        isStandalone
+            ? await localRepository.event(id, eventId)
+            : await repository.get(
+              '/stores/$id/events/${Uri.encodeComponent(eventId)}',
+            );
+    if (!_current(generation) || store?['id'] != id) {
+      throw const ApiFailure('sessionExpired');
+    }
+    return Map<String, dynamic>.from(data as Map);
+  }
 
   Future<AutonomousActionPlan> recommendations() async {
     final generation = _generation;
@@ -271,6 +383,7 @@ class AppController extends ChangeNotifier {
     await _persistPreferences(next);
     if (!_current(generation)) return;
     _preferences = next;
+    ledgerRevision++;
     settingsSyncPending = !global && selectedId != null;
     notifyListeners();
     if (!global && selectedId != null && paired && !isOffline) {
@@ -778,6 +891,7 @@ class AppController extends ChangeNotifier {
     await cache.put('snapshot', data);
     cacheTimestamp = DateTime.now().toUtc();
     isOffline = false;
+    ledgerRevision++;
     notifyListeners();
   }
 
@@ -862,10 +976,52 @@ class AppController extends ChangeNotifier {
     if (monitoringActive) throw const ApiFailure('settingsAfterMonitoring');
     final id = store?['id'];
     if (id == null) return;
-    await repository.delete('/stores/$id');
+    final generation = _generation, selectedRepository = repository;
+    final backend = selectedRepository.identity;
+    await selectedRepository.delete('/stores/$id');
+    if (!_current(generation) || repository.identity != backend) {
+      throw const ApiFailure('sessionExpired');
+    }
     await cache.erase();
+    if (!_current(generation) || repository.identity != backend) {
+      throw const ApiFailure('sessionExpired');
+    }
     _clearBusinessState();
     await refresh();
+  }
+
+  Future<void> deleteAllStoreData() async {
+    if (monitoringActive) throw const ApiFailure('settingsAfterMonitoring');
+    final generation = _generation,
+        selectedRepository = repository,
+        owner = _identityUid;
+    final backend = selectedRepository.identity;
+    await selectedRepository.delete('/stores');
+    if (!_current(generation) || repository.identity != backend) {
+      throw const ApiFailure('sessionExpired');
+    }
+    await cache.erase();
+    if (!_current(generation) ||
+        repository.identity != backend ||
+        _identityUid != owner) {
+      throw const ApiFailure('sessionExpired');
+    }
+    _clearBusinessState();
+    ledgerRevision++;
+    final scopes = Map<String, dynamic>.from(
+      _preferences['scopes'] as Map? ?? {},
+    );
+    scopes.removeWhere((key, _) {
+      try {
+        final scope = jsonDecode(key) as List;
+        return scope[0] == owner && scope[1] == backend;
+      } catch (_) {
+        return false;
+      }
+    });
+    _preferences = {..._preferences, 'scopes': scopes};
+    await _persistPreferences(_preferences);
+    if (_current(generation)) notifyListeners();
   }
 
   Future<void> disconnect() async {
@@ -891,6 +1047,10 @@ class AppController extends ChangeNotifier {
 
   void markMonitoringActive(bool active) {
     monitoringActive = active;
+    if (!active) {
+      lastMonitoringFrame = null;
+      _frameFreshness?.cancel();
+    }
     notifyListeners();
   }
 
@@ -914,6 +1074,7 @@ class AppController extends ChangeNotifier {
   }
 
   void _clearBusinessState({bool clearStores = true}) {
+    lastShelfScan = null;
     ++_selectionGeneration;
     store = null;
     if (clearStores) stores = [];
@@ -923,6 +1084,8 @@ class AppController extends ChangeNotifier {
     items = [];
     calibrations = [];
     monitoringActive = false;
+    lastMonitoringFrame = null;
+    _frameFreshness?.cancel();
     cacheTimestamp = null;
   }
 
@@ -973,6 +1136,8 @@ class AppController extends ChangeNotifier {
 
   @override
   void dispose() {
+    _disposed = true;
+    _frameFreshness?.cancel();
     ++_generation;
     _aiRouter?.dispose();
     _expiryTimer?.cancel();

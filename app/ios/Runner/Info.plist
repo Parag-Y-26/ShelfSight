@@ -28,6 +28,8 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>Scan barcodes, identify shelf products, and count anonymous shelf visits on this device.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Choose a shelf photo to review before sending it to your selected AI provider.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Connect to your optional ShelfSight server when you choose remote server mode.</string>
 	<key>CFBundleURLTypes</key>

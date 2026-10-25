@@ -7,6 +7,7 @@ import '../core/app_controller.dart';
 import '../core/strings.dart';
 import '../core/theme.dart';
 import '../widgets/shared.dart';
+import '../widgets/ai_keys_panel.dart';
 
 class CloudConnectionScreen extends ConsumerStatefulWidget {
   const CloudConnectionScreen({super.key});
@@ -116,6 +117,7 @@ class _CloudConnectionScreenState extends ConsumerState<CloudConnectionScreen> {
       child: ListView(
         padding: const EdgeInsets.all(Tokens.lg),
         children: [
+          const AiKeysPanel(quickSetup: true),
           if (app.supportsStandalone)
             InfoCard(
               child: Column(

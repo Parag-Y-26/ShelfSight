@@ -6,6 +6,8 @@ import '../core/app_controller.dart';
 import '../core/strings.dart';
 import '../core/theme.dart';
 import '../widgets/shared.dart';
+import '../widgets/provider_badge.dart';
+import '../widgets/store_summary.dart';
 
 class DashboardScreen extends ConsumerWidget {
   const DashboardScreen({super.key});
@@ -63,6 +65,8 @@ class DashboardScreen extends ConsumerWidget {
                   ).textTheme.headlineSmall?.copyWith(color: Tokens.muted),
                 ),
                 const SizedBox(height: Tokens.lg),
+                const ProviderBadge(),
+                if (store != null) const StoreSummary(),
                 if (controller.isOffline)
                   InfoCard(
                     child: Row(
@@ -121,7 +125,7 @@ class DashboardScreen extends ConsumerWidget {
                   subtitle: tr(context, 'monitoringSubtitle'),
                   icon: Icons.center_focus_strong,
                   gradient: true,
-                  live: controller.monitoringActive,
+                  live: controller.monitoringLive,
                   onTap: store == null ? null : () => context.push('/monitor'),
                 ),
                 const SizedBox(height: Tokens.lg),
@@ -221,7 +225,7 @@ class _DashboardCard extends StatelessWidget {
                             vertical: Tokens.xs,
                           ),
                           decoration: BoxDecoration(
-                            color: Tokens.scrim,
+                            color: Tokens.live,
                             borderRadius: BorderRadius.circular(Tokens.md),
                           ),
                           child: Text(

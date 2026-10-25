@@ -14,6 +14,7 @@ import 'package:shelfsight/core/strings.dart';
 import 'package:shelfsight/core/theme.dart';
 import 'package:shelfsight/screens/recommendations.dart';
 import 'package:shelfsight/widgets/ai_keys_panel.dart';
+import 'package:shelfsight/widgets/provider_badge.dart';
 
 import 'ai_provider_router_test.dart' show MemoryCredentials, FakeAiTransport;
 import 'runtime_settings_test.dart' show MemorySettings, OfflineApi;
@@ -196,6 +197,69 @@ void main() {
     },
   );
 
+  testWidgets(
+    'provider badge distinguishes preferred route, actual fallback and server credentials',
+    (tester) async {
+      final keys = MemoryCredentials();
+      await keys.setKey('gemini', 'test-gemini');
+      await keys.setKey('nvidia_nim', 'test-nim');
+      final transport = FakeAiTransport()..failures = 1;
+      final config = configuration();
+      final router = AiProviderRouter(
+        config,
+        credentials: keys,
+        transport: transport,
+      );
+      final app = AppController.forTesting(
+        api: OfflineApi(),
+        config: config,
+        store: {'id': 'owned'},
+        aiRouter: router,
+        aiCredentials: keys,
+        settingsStore: MemorySettings(),
+      );
+      await pump(
+        tester,
+        app,
+        const Scaffold(body: ProviderBadge(direct: true)),
+      );
+      expect(find.textContaining('Next scan route:'), findsOneWidget);
+      final result = await router.generate(
+        'shelf_scan',
+        'unit test',
+        preferred: 'gemini',
+      );
+      expect(result.provider, 'nvidia_nim');
+      app.recordShelfScan(provider: result.provider, model: result.model);
+      await tester.pumpAndSettle();
+      expect(
+        find.textContaining('Last scan served by: NVIDIA NIM'),
+        findsOneWidget,
+      );
+      expect(app.aiRoutingRevision, 2);
+      final remoteConfig = configuration();
+      remoteConfig['settings']['execution_mode'] = 'remote_server';
+      final remote = AppController.forTesting(
+        api: OfflineApi(),
+        config: remoteConfig,
+        store: {'id': 'server'},
+        aiCredentials: MemoryCredentials(),
+        settingsStore: MemorySettings(),
+      );
+      await remote.saveSettings({
+        'execution_mode': 'remote_server',
+      }, global: true);
+      await pump(tester, remote, const Scaffold(body: ProviderBadge()));
+      expect(find.textContaining('Server AI routing'), findsOneWidget);
+      expect(find.textContaining('No AI key configured'), findsNothing);
+      remote.recordShelfScan(provider: 'openrouter', model: 'server-model');
+      await tester.pumpAndSettle();
+      expect(
+        find.textContaining('Last scan served by: OpenRouter · server-model'),
+        findsOneWidget,
+      );
+    },
+  );
   testWidgets(
     'a completed recommendation disappears after store context changes',
     (tester) async {

@@ -177,6 +177,10 @@ class _StoreSetupScreenState extends ConsumerState<StoreSetupScreen> {
           child: ListView(
             padding: const EdgeInsets.all(Tokens.md),
             children: [
+              Semantics(
+                label: tr(context, 'restaurantDeferred'),
+                child: Chip(label: Text(tr(context, 'restaurantDeferred'))),
+              ),
               LinearProgressIndicator(
                 value: 0.5,
                 borderRadius: BorderRadius.circular(Tokens.radius),

@@ -17,24 +17,33 @@ class PageScaffold extends StatelessWidget {
   final Widget? bottom;
   @override
   Widget build(BuildContext context) => Scaffold(
+    resizeToAvoidBottomInset: true,
     appBar: AppBar(
       title: Text(
         title,
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
         style: Theme.of(
           context,
         ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
       ),
       actions: actions,
     ),
-    body: SafeArea(top: false, child: child),
+    body: SafeArea(top: false, child: FocusTraversalGroup(child: child)),
     bottomNavigationBar:
         bottom == null
             ? null
             : SafeArea(
               top: false,
-              child: Padding(
-                padding: const EdgeInsets.all(Tokens.md),
-                child: bottom,
+              child: AnimatedPadding(
+                duration: const Duration(milliseconds: 150),
+                padding: EdgeInsets.only(
+                  bottom: MediaQuery.viewInsetsOf(context).bottom,
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(Tokens.md),
+                  child: bottom,
+                ),
               ),
             ),
   );

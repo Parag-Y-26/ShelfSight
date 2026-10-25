@@ -80,10 +80,7 @@ class BottomCenterIoUTracker {
     final point = Offset(d.bbox.center.dx, d.bbox.bottom);
     for (final z in zones) {
       // Rect.contains excludes right/bottom; calibrated bounds are inclusive.
-      if (point.dx >= z.rect.left &&
-          point.dx <= z.rect.right &&
-          point.dy >= z.rect.top &&
-          point.dy <= z.rect.bottom &&
+      if (z.contains(point) &&
           d.confidence >=
               _number(z.shelfId, 'detection_confidence_threshold')) {
         return z.shelfId;

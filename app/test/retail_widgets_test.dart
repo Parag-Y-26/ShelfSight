@@ -384,9 +384,14 @@ void main() {
     await tester.tap(find.text('Save shelf'));
     await tester.pumpAndSettle();
     final correction =
-        api.patches.where((p) => p['path'] == '/items/owned-item').single;
-    expect(correction['body'], {'row': 3, 'slot': 2, 'quantity': 8});
-    expect(api.posts, isEmpty);
+        api.posts
+            .where((p) => p['path'] == '/shelves/owned-shelf/planogram')
+            .single;
+    expect(correction['body'], {
+      'items': [
+        {'id': 'owned-item', 'row': 3, 'slot': 2, 'quantity': 8},
+      ],
+    });
     expect(find.byIcon(Icons.map_outlined), findsOneWidget);
   });
 

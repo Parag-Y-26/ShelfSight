@@ -1,16 +1,21 @@
 import 'dart:async';
-import 'dart:typed_data';
+import 'dart:math' as math;
 
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:flutter/foundation.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../core/app_controller.dart';
 import '../core/ai_contracts.dart';
 import '../core/strings.dart';
 import '../core/theme.dart';
 import '../core/temp_photo.dart';
+import '../core/shelf_scan_output.dart';
+import '../core/shelf_photo.dart';
+import '../widgets/provider_badge.dart';
 import '../widgets/shared.dart';
 import 'shelf_results.dart';
 import 'ai_results.dart';
@@ -32,12 +37,77 @@ class _ShelfScanScreenState extends ConsumerState<ShelfScanScreen>
   bool _initializing = true;
   bool _busy = false;
   int _cameraGeneration = 0;
+  final _picker = ImagePicker();
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    unawaited(_initializeCamera());
+    unawaited(_restoreOrInitialize());
+  }
+
+  Future<void> _restoreOrInitialize() async {
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+      try {
+        final lost = await _picker.retrieveLostData();
+        if (lost.files?.isNotEmpty == true) {
+          await _acceptGallery(lost.files!.first);
+          return;
+        }
+      } catch (_) {}
+    }
+    if (mounted) await _initializeCamera();
+  }
+
+  Future<void> _acceptGallery(XFile file) async {
+    final app = ref.read(appControllerProvider),
+        identity = ref.read(appControllerProvider).identityGeneration;
+    final raw = await file.readAsBytes();
+    // The native photo picker returns an app-cache copy on Android/iOS.
+    // Desktop gallery files remain user-owned and must never be deleted.
+    if (kIsWeb ||
+        defaultTargetPlatform == TargetPlatform.android ||
+        defaultTargetPlatform == TargetPlatform.iOS) {
+      await deleteTempPhoto(file.path);
+    }
+    if (!mounted || identity != app.identityGeneration) return;
+    final bytes = await compute(prepareShelfImage, {
+      'bytes': raw,
+      'max_bytes': (app.config['limits']['max_image_bytes'] as num).toInt(),
+      'max_pixels': (app.config['limits']['max_image_pixels'] as num).toInt(),
+    });
+    if (!mounted || identity != app.identityGeneration) return;
+    final old = _camera;
+    _camera = null;
+    _cameraGeneration++;
+    setState(() {
+      _photo = bytes;
+      _initializing = false;
+      _errorKey = null;
+    });
+    await old?.dispose();
+  }
+
+  Future<void> _gallery() async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      final limit =
+          (ref.read(appControllerProvider).config['limits']['max_image_pixels']
+                  as num)
+              .toDouble();
+      final file = await _picker.pickImage(
+        source: ImageSource.gallery,
+        maxWidth: math.sqrt(limit),
+        maxHeight: math.sqrt(limit),
+        requestFullMetadata: false,
+      );
+      if (file != null && mounted) await _acceptGallery(file);
+    } catch (_) {
+      if (mounted) setState(() => _errorKey = 'rsCaptureFailed');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   @override
@@ -205,6 +275,11 @@ class _ShelfScanScreenState extends ConsumerState<ShelfScanScreen>
             (!widget.direct && app.store?['id']?.toString() != storeId)) {
           return;
         }
+        app.recordShelfScan(
+          provider: result.provider,
+          model: result.model,
+          shelfId: shelfId,
+        );
         await Navigator.of(context).push(
           MaterialPageRoute<void>(
             builder:
@@ -213,7 +288,10 @@ class _ShelfScanScreenState extends ConsumerState<ShelfScanScreen>
                         ? ShelfResultsScreen(
                           shelfId: shelfId,
                           candidates: arrangeScanCandidates(
-                            result.data['candidates'] as List,
+                            ShelfScanStructuredOutput.parse(
+                              result.data,
+                              app.config,
+                            ).candidates,
                           ),
                         )
                         : AiScanResultsScreen(result: result),
@@ -233,19 +311,21 @@ class _ShelfScanScreenState extends ConsumerState<ShelfScanScreen>
         '/stores/${Uri.encodeComponent(storeId!)}/scan?$query',
         photo,
       );
-      final raw = result is Map ? result['candidates'] : null;
       final candidates =
-          raw is List
-              ? raw
-                  .whereType<Map>()
-                  .map((e) => Map<String, dynamic>.from(e))
-                  .toList()
-              : <Map<String, dynamic>>[];
+          ShelfScanStructuredOutput.parse(
+            Map<String, dynamic>.from(result as Map),
+            app.config,
+          ).candidates;
       if (!mounted ||
           app.identityGeneration != generation ||
           app.store?['id']?.toString() != storeId) {
         return;
       }
+      app.recordShelfScan(
+        provider: result['source']?.toString() ?? 'unknown',
+        model: result['model']?.toString(),
+        shelfId: shelfId,
+      );
       await Navigator.of(context).pushReplacement(
         MaterialPageRoute<void>(
           builder:
@@ -335,6 +415,13 @@ class _ShelfScanScreenState extends ConsumerState<ShelfScanScreen>
         child: ListView(
           padding: const EdgeInsets.all(Tokens.md),
           children: [
+            InfoCard(child: Text(tr(context, 'scanPrivacyBanner'))),
+            ProviderBadge(shelfId: shelfId, direct: widget.direct),
+            OutlinedButton.icon(
+              onPressed: _busy ? null : _gallery,
+              icon: const Icon(Icons.photo_library_outlined),
+              label: Text(tr(context, 'chooseGallery')),
+            ),
             Text(
               tr(context, 'rsScanHeading'),
               style: theme.textTheme.headlineSmall,

@@ -434,6 +434,8 @@ class MonitoringController extends ChangeNotifier {
         events = [...recorded.reversed, ...events].take(1000).toList();
         phase = MonitorPhase.live;
         if (!app.monitoringActive) app.markMonitoringActive(true);
+        app.frameProcessed();
+        if (recorded.isNotEmpty) app.ledgerChanged();
         _notify();
       } catch (_) {
         if (generation == _sessionGeneration) {
@@ -517,6 +519,28 @@ class MonitoringController extends ChangeNotifier {
       return;
     }
     zones = [...others, candidate];
+    calibrationId = null;
+    cameraConfirmed = false;
+    errorKey = null;
+    _notify();
+  }
+
+  void setPolygon(List<Offset> vertices) {
+    if (running || selectedShelfId == null || vertices.isEmpty) return;
+    final xs = vertices.map((p) => p.dx).toList()..sort(),
+        ys = vertices.map((p) => p.dy).toList()..sort();
+    final zone = CameraZone(
+      shelfId: selectedShelfId!,
+      rect: Rect.fromLTRB(xs.first, ys.first, xs.last, ys.last),
+      polygon: List.unmodifiable(vertices),
+    );
+    final others = zones.where((z) => z.shelfId != selectedShelfId).toList();
+    if (!zone.valid || others.any(zone.overlaps)) {
+      errorKey = 'invalidZone';
+      _notify();
+      return;
+    }
+    zones = [...others, zone];
     calibrationId = null;
     cameraConfirmed = false;
     errorKey = null;
@@ -831,6 +855,8 @@ class MonitoringController extends ChangeNotifier {
       ];
       phase = MonitorPhase.live;
       if (!app.monitoringActive) app.markMonitoringActive(true);
+      app.frameProcessed();
+      if (received.isNotEmpty) app.ledgerChanged();
       _notify();
       unawaited(_drain());
     } catch (_) {
@@ -847,6 +873,7 @@ class MonitoringController extends ChangeNotifier {
           : [];
 
   Future<void> stop({String? reason}) async {
+    app.framesStopped();
     if (_localStopFuture != null) {
       await _localStopFuture;
       return;
@@ -921,6 +948,7 @@ class MonitoringController extends ChangeNotifier {
     await _localFrameFuture;
     try {
       if (id != null && repo != null) await repo.post('/monitoring/$id/stop');
+      app.ledgerChanged();
       if (!_disposed) await loadEvents();
     } catch (_) {
       if (!_disposed) errorKey = 'monitorStopUnconfirmed';

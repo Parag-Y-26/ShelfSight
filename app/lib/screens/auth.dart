@@ -191,7 +191,8 @@ class _AuthScreenState extends ConsumerState<AuthScreen> {
                     ),
                   ),
                 ],
-                if (controller.supportsStandalone) const AiKeysPanel(),
+                if (controller.supportsStandalone)
+                  const AiKeysPanel(quickSetup: true),
                 if (!controller.supabaseConfigured &&
                     !controller.supportsStandalone)
                   InfoCard(

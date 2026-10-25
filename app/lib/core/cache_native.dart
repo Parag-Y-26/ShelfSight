@@ -118,10 +118,12 @@ class OwnerCache {
   }
 
   Future<void> erase() async {
-    if (_uid != null) {
-      await _db?.delete('cache', where: 'owner = ?', whereArgs: [_uid]);
-      await _db?.delete('ledger_events', where: 'owner = ?', whereArgs: [_uid]);
-    }
+    final db = _db, uid = _uid;
+    if (db == null || uid == null) return;
+    await db.transaction((tx) async {
+      await tx.delete('cache', where: 'owner = ?', whereArgs: [uid]);
+      await tx.delete('ledger_events', where: 'owner = ?', whereArgs: [uid]);
+    });
   }
 
   Future<void> close() async {

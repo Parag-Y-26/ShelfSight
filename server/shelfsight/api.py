@@ -42,6 +42,7 @@ from .schemas import (
     ItemPatch,
     MonitoringInput,
     PairInput,
+    PlanogramInput,
     ProductInput,
     ProductPatch,
     ShelfInput,
@@ -185,6 +186,8 @@ def create_app(
     injected_vision = vision if "injected" in vision_providers else None
     limiter = RateLimiter()
     runtimes: dict[str, MonitorRuntime] = {}
+    # Serialize runtime admission with deletion while frame locks are awaited.
+    owner_monitor_locks: dict[str, asyncio.Lock] = {}
     scan_lock = asyncio.Semaphore(1)
     stream_tickets: dict[str, tuple[str, str, float]] = {}
 
@@ -449,7 +452,17 @@ def create_app(
         floor_data, shelf_count = values.pop("floor"), values.pop("shelf_count")
         with db.transaction():
             store = db.create("store", uid, "", {**values, "settings": {}})
-            floor = db.create("floor", uid, store["id"], floor_data)
+            scale = 0.3048 if store["unit"] == "ft" else 1.0
+            floor = db.create(
+                "floor",
+                uid,
+                store["id"],
+                {
+                    **floor_data,
+                    "width_m": floor_data["width"] * scale,
+                    "length_m": floor_data["length"] * scale,
+                },
+            )
             for index in range(shelf_count):
                 db.create(
                     "shelf",
@@ -510,19 +523,31 @@ def create_app(
 
     @app.delete("/v1/stores/{store_id}", status_code=204)
     async def delete_store(store_id: str, uid: Owner):
-        db.get("store", store_id, uid)
-        for session_id, runtime in list(runtimes.items()):
-            if runtime.session["owner_uid"] == uid and runtime.session["store_id"] == store_id:
-                async with runtime.lock:
-                    finish(uid, session_id, True)
-                    runtimes.pop(session_id, None)
-        db.delete_store(uid, store_id)
-        return Response(status_code=204)
+        async with owner_monitor_locks.setdefault(uid, asyncio.Lock()):
+            db.get("store", store_id, uid)
+            for session_id, runtime in list(runtimes.items()):
+                if runtime.session["owner_uid"] == uid and runtime.session["store_id"] == store_id:
+                    async with runtime.lock:
+                        finish(uid, session_id, True)
+                        runtimes.pop(session_id, None)
+            db.delete_store(uid, store_id)
+            return Response(status_code=204)
 
     @app.post("/v1/stores/{store_id}/floors", status_code=201)
     def create_floor(store_id: str, payload: FloorInput, uid: Owner):
-        db.get("store", store_id, uid)
-        return db.create("floor", uid, store_id, payload.model_dump())
+        with db.transaction():
+            store = db.get("store", store_id, uid)
+            scale = 0.3048 if store["unit"] == "ft" else 1.0
+            return db.create(
+                "floor",
+                uid,
+                store_id,
+                {
+                    **payload.model_dump(),
+                    "width_m": payload.width * scale,
+                    "length_m": payload.length * scale,
+                },
+            )
 
     def validate_geometry(shelf: dict, floor: dict):
         keys = ("x", "y", "width", "length")
@@ -543,6 +568,14 @@ def create_app(
         changes = patch_data(payload)
         with db.transaction():
             floor = db.get("floor", floor_id, uid)
+            store = db.get("store", floor["store_id"], uid)
+            scale = 0.3048 if store["unit"] == "ft" else 1.0
+            changes.update(
+                {
+                    "width_m": changes.get("width", floor["width"]) * scale,
+                    "length_m": changes.get("length", floor["length"]) * scale,
+                }
+            )
             for shelf in db.list("shelf", uid, floor["store_id"]):
                 if shelf["floor_id"] == floor_id:
                     validate_geometry(shelf, {**floor, **changes})
@@ -550,27 +583,28 @@ def create_app(
 
     @app.post("/v1/stores/{store_id}/shelves", status_code=201)
     def create_shelf(store_id: str, payload: ShelfInput, uid: Owner):
-        db.get("store", store_id, uid)
-        floor = db.get("floor", payload.floor_id, uid)
-        if floor["store_id"] != store_id:
-            raise HTTPException(422, "Floor belongs to a different store")
-        return db.create(
-            "shelf",
-            uid,
-            store_id,
-            {
-                **payload.model_dump(),
-                "settings": {},
-                "shape": config.data["shapes"][0]["id"],
-                "x": None,
-                "y": None,
-                "width": None,
-                "length": None,
-                "rotation": 0,
-                "rows": None,
-            },
-            floor["id"],
-        )
+        with db.transaction():
+            db.get("store", store_id, uid)
+            floor = db.get("floor", payload.floor_id, uid)
+            if floor["store_id"] != store_id:
+                raise HTTPException(422, "Floor belongs to a different store")
+            return db.create(
+                "shelf",
+                uid,
+                store_id,
+                {
+                    **payload.model_dump(),
+                    "settings": {},
+                    "shape": config.data["shapes"][0]["id"],
+                    "x": None,
+                    "y": None,
+                    "width": None,
+                    "length": None,
+                    "rotation": 0,
+                    "rows": None,
+                },
+                floor["id"],
+            )
 
     @app.patch("/v1/shelves/{shelf_id}")
     def update_shelf(shelf_id: str, payload: ShelfPatch, uid: Owner):
@@ -605,6 +639,9 @@ def create_app(
                 "delta": item["quantity"] - previous,
                 "quantity": item["quantity"],
                 "reason": reason,
+                "event_type": "INITIAL_STOCK" if reason == "initial_quantity" else "STOCK_CORRECTION",
+                "row": item["row"],
+                "slot": item["slot"],
                 "owner_uid": uid,
                 **provenance(),
             },
@@ -621,7 +658,10 @@ def create_app(
         if values.get("currency"):
             check_options({"currency": values["currency"]})
         validate_product_image(values)
-        return db.create("product", uid, store_id, values)
+        with db.transaction():
+            # Image validation may outlive a concurrent store deletion.
+            db.get("store", store_id, uid)
+            return db.create("product", uid, store_id, values)
 
     @app.patch("/v1/products/{product_id}")
     def update_product(product_id: str, payload: ProductPatch, uid: Owner):
@@ -690,6 +730,62 @@ def create_app(
                     "user_correction",
                 )
             return updated
+
+    @app.get("/v1/stores/{store_id}/events/{event_id}")
+    def event_citation(store_id: str, event_id: str, uid: Owner):
+        db.get("store", store_id, uid)
+        row = db.execute(
+            "SELECT data FROM events WHERE id=? AND owner=? AND store_id=?", (event_id, uid, store_id)
+        ).fetchone()
+        if row is None:
+            raise HTTPException(404, "Event is unavailable")
+        return json.loads(row["data"])
+
+    @app.post("/v1/shelves/{shelf_id}/planogram")
+    def save_planogram(shelf_id: str, payload: PlanogramInput, uid: Owner):
+        with db.transaction():
+            shelf = db.get("shelf", shelf_id, uid)
+            row_limit = payload.rows if payload.rows is not None else shelf.get("rows")
+            items = [i for i in db.list("item", uid, shelf["store_id"]) if i["shelf_id"] == shelf_id]
+            updates = {item.id: item.model_dump(exclude={"id"}) for item in payload.items}
+            if len(updates) != len(payload.items) or not set(updates) <= {i["id"] for i in items}:
+                raise HTTPException(422, "Invalid or duplicate item ID")
+            occupied = set()
+            for item in items:
+                final = {**item, **updates.get(item["id"], {})}
+                if row_limit is not None and final["row"] > row_limit:
+                    raise HTTPException(422, "Row exceeds the shelf row count")
+                position = (final["row"], final["slot"])
+                if position in occupied:
+                    raise HTTPException(409, "The selected row and slot are already occupied")
+                occupied.add(position)
+            if payload.rows is not None:
+                db.update("shelf", shelf_id, uid, {"rows": payload.rows})
+            for item in items:
+                changes = updates.get(item["id"])
+                if changes and any(item[k] != v for k, v in changes.items()):
+                    updated = db.update("item", item["id"], uid, changes)
+                    inventory_event(
+                        uid,
+                        updated,
+                        db.get("product", item["product_id"], uid),
+                        item["quantity"],
+                        "user_correction",
+                    )
+            return {"items": db.list("item", uid, shelf["store_id"])}
+
+    @app.delete("/v1/stores", status_code=204)
+    async def delete_all_stores(uid: Owner):
+        async with owner_monitor_locks.setdefault(uid, asyncio.Lock()):
+            for session_id, runtime in list(runtimes.items()):
+                if runtime.session["owner_uid"] == uid:
+                    async with runtime.lock:
+                        finish(uid, session_id, True)
+                        runtimes.pop(session_id, None)
+            with db.transaction():
+                db.execute("DELETE FROM events WHERE owner=?", (uid,))
+                db.execute("DELETE FROM objects WHERE owner=?", (uid,))
+            return Response(status_code=204)
 
     @app.post("/v1/stores/{store_id}/scan")
     async def scan(
@@ -760,14 +856,17 @@ def create_app(
 
     @app.post("/v1/stores/{store_id}/calibrations", status_code=201)
     def calibrate(store_id: str, payload: CalibrationInput, uid: Owner):
-        db.get("store", store_id, uid)
-        for zone in payload.zones:
-            if db.get("shelf", zone.shelf_id, uid)["store_id"] != store_id:
-                raise HTTPException(422, "Calibration shelf belongs to a different store")
-        if payload.frame_width * payload.frame_height > config.data["limits"]["max_image_pixels"]:
-            raise HTTPException(413, "Calibration dimensions exceed image pixel limit")
-        revision = len(db.list("calibration", uid, store_id)) + 1
-        return db.create("calibration", uid, store_id, {**payload.model_dump(), "revision": revision})
+        with db.transaction():
+            db.get("store", store_id, uid)
+            for zone in payload.zones:
+                if db.get("shelf", zone.shelf_id, uid)["store_id"] != store_id:
+                    raise HTTPException(422, "Calibration shelf belongs to a different store")
+            if payload.frame_width * payload.frame_height > config.data["limits"]["max_image_pixels"]:
+                raise HTTPException(413, "Calibration dimensions exceed image pixel limit")
+            revision = len(db.list("calibration", uid, store_id)) + 1
+            return db.create(
+                "calibration", uid, store_id, {**payload.model_dump(), "revision": revision}
+            )
 
     @app.post("/v1/stores/{store_id}/monitoring", status_code=201)
     async def start_monitoring(
@@ -776,77 +875,86 @@ def create_app(
         uid: Owner,
         authorization: Annotated[str | None, Header()] = None,
     ):
-        store = db.get("store", store_id, uid)
-        calibration = db.get("calibration", payload.calibration_id, uid)
-        try:
-            payload.settings = config.validate_overrides(payload.settings)
-            if payload.store_settings is not None:
-                store = {**store, "settings": config.validate_overrides(payload.store_settings)}
-            for shelf_id, overrides in payload.shelf_settings.items():
-                if db.get("shelf", shelf_id, uid)["store_id"] != store_id:
-                    raise HTTPException(422, "Monitoring shelf belongs to a different store")
-                payload.shelf_settings[shelf_id] = config.validate_overrides(overrides)
-        except ValueError as exc:
-            raise HTTPException(422, str(exc)) from exc
-        if calibration["store_id"] != store_id:
-            raise HTTPException(422, "Calibration belongs to a different store")
-        if not detector.available:
-            raise HTTPException(503, detector.reason)
-        # A client may disappear between POST and the WebSocket handshake. Recover
-        # only abandoned starts; a connected monitor must be stopped explicitly.
-        for previous in db.list("monitoring", uid, store_id):
-            if previous["status"] != "active":
-                continue
-            runtime = runtimes.get(previous["id"])
-            timeout = config.data["limits"].get("stream_connect_timeout_seconds", 30)
-            if runtime and (runtime.connected or time.monotonic() - runtime.created_at < timeout):
-                raise HTTPException(409, "Stop the active monitoring session before starting another")
-            finish(uid, previous["id"], True)
-            runtimes.pop(previous["id"], None)
-        with db.transaction():
-            if any(session["status"] == "active" for session in db.list("monitoring", uid, store_id)):
-                raise HTTPException(409, "Stop the active monitoring session before starting another")
-            shelf_thresholds = {
-                zone["shelf_id"]: config.thresholds(
-                    store,
+        async with owner_monitor_locks.setdefault(uid, asyncio.Lock()):
+            store = db.get("store", store_id, uid)
+            calibration = db.get("calibration", payload.calibration_id, uid)
+            try:
+                payload.settings = config.validate_overrides(payload.settings)
+                if payload.store_settings is not None:
+                    store = {**store, "settings": config.validate_overrides(payload.store_settings)}
+                for shelf_id, overrides in payload.shelf_settings.items():
+                    if db.get("shelf", shelf_id, uid)["store_id"] != store_id:
+                        raise HTTPException(422, "Monitoring shelf belongs to a different store")
+                    payload.shelf_settings[shelf_id] = config.validate_overrides(overrides)
+            except ValueError as exc:
+                raise HTTPException(422, str(exc)) from exc
+            if calibration["store_id"] != store_id:
+                raise HTTPException(422, "Calibration belongs to a different store")
+            if not detector.available:
+                raise HTTPException(503, detector.reason)
+            # A client may disappear between POST and the WebSocket handshake. Recover
+            # only abandoned starts; a connected monitor must be stopped explicitly.
+            for previous in db.list("monitoring", uid, store_id):
+                if previous["status"] != "active":
+                    continue
+                runtime = runtimes.get(previous["id"])
+                timeout = config.data["limits"].get("stream_connect_timeout_seconds", 30)
+                if runtime and (runtime.connected or time.monotonic() - runtime.created_at < timeout):
+                    raise HTTPException(
+                        409, "Stop the active monitoring session before starting another"
+                    )
+                finish(uid, previous["id"], True)
+                runtimes.pop(previous["id"], None)
+            with db.transaction():
+                if any(
+                    session["status"] == "active" for session in db.list("monitoring", uid, store_id)
+                ):
+                    raise HTTPException(
+                        409, "Stop the active monitoring session before starting another"
+                    )
+                shelf_thresholds = {
+                    zone["shelf_id"]: config.thresholds(
+                        store,
+                        {
+                            **db.get("shelf", zone["shelf_id"], uid),
+                            **(
+                                {"settings": payload.shelf_settings[zone["shelf_id"]]}
+                                if zone["shelf_id"] in payload.shelf_settings
+                                else {}
+                            ),
+                        },
+                        payload.settings,
+                    )
+                    for zone in calibration["zones"]
+                }
+                if any(
+                    value["execution_mode"] != "remote_server" for value in shelf_thresholds.values()
+                ):
+                    raise HTTPException(409, "Select remote_server for every monitored shelf")
+                session = db.create(
+                    "monitoring",
+                    uid,
+                    store_id,
                     {
-                        **db.get("shelf", zone["shelf_id"], uid),
-                        **(
-                            {"settings": payload.shelf_settings[zone["shelf_id"]]}
-                            if zone["shelf_id"] in payload.shelf_settings
-                            else {}
-                        ),
+                        "owner_uid": uid,
+                        "calibration_id": calibration["id"],
+                        "status": "active",
+                        "started_at": utc_now(),
+                        "ended_at": None,
+                        "incomplete": False,
+                        "config_revision": config.data["revision"],
+                        "calibration_revision": calibration["revision"],
+                        "thresholds": config.thresholds(store, device_defaults=payload.settings),
+                        "shelf_thresholds": shelf_thresholds,
+                        "active_tracks": [],
+                        "frames": 0,
+                        "bytes": 0,
                     },
-                    payload.settings,
                 )
-                for zone in calibration["zones"]
-            }
-            if any(value["execution_mode"] != "remote_server" for value in shelf_thresholds.values()):
-                raise HTTPException(409, "Select remote_server for every monitored shelf")
-            session = db.create(
-                "monitoring",
-                uid,
-                store_id,
-                {
-                    "owner_uid": uid,
-                    "calibration_id": calibration["id"],
-                    "status": "active",
-                    "started_at": utc_now(),
-                    "ended_at": None,
-                    "incomplete": False,
-                    "config_revision": config.data["revision"],
-                    "calibration_revision": calibration["revision"],
-                    "thresholds": config.thresholds(store, device_defaults=payload.settings),
-                    "shelf_thresholds": shelf_thresholds,
-                    "active_tracks": [],
-                    "frames": 0,
-                    "bytes": 0,
-                },
-            )
-            runtimes[session["id"]] = MonitorRuntime(
-                session, calibration, token_hash(bearer(authorization))
-            )
-        return session
+                runtimes[session["id"]] = MonitorRuntime(
+                    session, calibration, token_hash(bearer(authorization))
+                )
+            return session
 
     @app.post("/v1/monitoring/{session_id}/stop")
     async def stop_monitoring(session_id: str, uid: Owner):
@@ -1069,9 +1177,18 @@ def create_app(
                 runtimes.pop(session_id, None)
 
     @app.get("/v1/stores/{store_id}/events")
-    def events(store_id: str, uid: Owner, after: str | None = None):
+    def events(
+        store_id: str,
+        uid: Owner,
+        after: str | None = None,
+        limit: Annotated[
+            int | None, Query(ge=1, le=config.data["ai"]["limits"]["max_decision_events"])
+        ] = None,
+    ):
         db.get("store", store_id, uid)
-        values = db.events(uid, store_id)
+        if after and limit is not None:
+            raise HTTPException(422, "Use either a recent-event limit or an after cursor")
+        values = db.events(uid, store_id, limit=limit)
         if after:
             index = next((i for i, event in enumerate(values) if event["id"] == after), None)
             if index is not None:

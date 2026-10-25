@@ -52,13 +52,15 @@
 ### 📱 Mobile App (Flutter)
 
 - **Shelf Scanner** — Point, snap, and let AI identify products on shelves
-- **Live Monitoring** — Real-time person detection and zone tracking via WebSocket
+- **Live Monitoring** — On-device ML Kit detection and SQLite visits in standalone mode; optional server monitoring via WebSocket
 - **Dashboard** — Overview of stores, shelves, inventory, and alerts
 - **Analytics** — Visit counts, dwell times, shelf exposure, with date filters & CSV export
 - **AI Recommendations** — Evidence-based restocking and rearrangement suggestions
 - **Multi-Store** — Manage multiple stores, floors, and shelf zones
 - **Direct AI Mode** — Use your own AI keys (Gemini/NIM/OpenRouter) without needing a backend
-- **Offline Support** — Core features work without internet; syncs when reconnected
+- **Offline Support** — Standalone store, inventory, map and visit data persist in on-device SQLite; AI and Open Food Facts require internet. Remote mode uses a separate dataset; automatic cross-mode sync is unavailable.
+
+See [Standalone Mobile](docs/STANDALONE_MOBILE.md) for setup and [Mobile Screens](docs/MOBILE_SCREENS.md) for screen behavior, accessibility checks and measurement limits.
 
 ### 🖥️ Backend Server (Python/FastAPI)
 
@@ -435,7 +437,7 @@ See the full guide: [Cloud Deployment](docs/CLOUD_DEPLOYMENT.md)
 - **Supabase Auth** — Industry-standard JWT-based authentication
 - **Encrypted key storage** — AI API keys are encrypted on-device (AES-GCM on web, Keystore on Android)
 - **Owner-scoped data** — You can only see your own stores and data
-- **No secrets in the app** — Server AI keys stay on the server; never bundled in the APK
+- **User-controlled AI keys** — Mobile keys use secure storage. Optional compile-time key injection is intended for private builds; injected keys are recoverable from distributed binaries.
 - **Rate limiting** — API requests are throttled to prevent abuse
 - **Input validation** — All inputs are validated; CSV exports are formula-injection safe
 

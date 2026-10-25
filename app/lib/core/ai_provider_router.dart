@@ -99,8 +99,38 @@ class AiProviderRouter {
   final AiCredentials credentials;
   final AiTransport transport;
   final LayaDecisionService laya;
+  AiResult? lastResult;
+  void Function()? onResult;
+  Future<Map<String, dynamic>?> previewChoice(
+    String task, {
+    String preferred = 'auto',
+  }) async {
+    final available = <String>[];
+    for (final provider in AiCredentials.providers) {
+      if ((await credentials.key(provider)).isNotEmpty) available.add(provider);
+    }
+    if (available.isEmpty) return null;
+    final choice = laya.choice(task, available, health());
+    final provider =
+        available.contains(preferred)
+            ? preferred
+            : choice['provider'].toString();
+    final profile = _ai['providers'][provider] as Map;
+    return {
+      ...choice,
+      'provider': provider,
+      'model': await credentials.model(
+        provider,
+        task,
+        profile[task == 'shelf_scan' ? 'vision_model' : 'decision_model']
+            as String,
+      ),
+    };
+  }
+
   final _samples = <String, List<({DateTime at, bool success, double ms})>>{};
   void dispose() {
+    onResult = null;
     if (transport is DioAiTransport) (transport as DioAiTransport).dispose();
   }
 
@@ -335,13 +365,15 @@ class AiProviderRouter {
         }
         validate?.call(data);
         success = true;
-        return AiResult(
+        final result = AiResult(
           data: data,
           provider: provider,
           model: body['model'] as String? ?? model,
           latencyMs: watch.elapsedMicroseconds / 1000,
           attempts: List.unmodifiable(attempts),
         );
+        lastResult = result;
+        return result;
       } catch (_) {
         // Do not propagate HTTP exceptions containing request bodies or keys.
       } finally {
@@ -354,6 +386,7 @@ class AiProviderRouter {
         while (samples.length > (limits['history_samples'] as num)) {
           samples.removeAt(0);
         }
+        onResult?.call();
       }
     }
     throw const AiProviderFailure();

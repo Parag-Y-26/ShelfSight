@@ -9,8 +9,13 @@ import '../core/theme.dart';
 import 'shared.dart';
 
 class AiKeysPanel extends ConsumerStatefulWidget {
-  const AiKeysPanel({super.key, this.showRouting = true});
+  const AiKeysPanel({
+    super.key,
+    this.showRouting = true,
+    this.quickSetup = false,
+  });
   final bool showRouting;
+  final bool quickSetup;
   @override
   ConsumerState<AiKeysPanel> createState() => _AiKeysPanelState();
 }
@@ -97,6 +102,7 @@ class _AiKeysPanelState extends ConsumerState<AiKeysPanel> {
     _saved[provider] = (await vault.key(provider)).isNotEmpty;
     _latency.remove(provider);
     _notice = 'aiKeysSaved';
+    ref.read(appControllerProvider).aiSettingsChanged();
   }
 
   @override
@@ -221,7 +227,12 @@ class _AiKeysPanelState extends ConsumerState<AiKeysPanel> {
                                   _notice = null;
                                 }
                               }),
-                      child: Text(tr(context, 'aiTestConnection')),
+                      child: Text(
+                        tr(
+                          context,
+                          widget.quickSetup ? 'verifyKey' : 'aiTestConnection',
+                        ),
+                      ),
                     ),
                     TextButton(
                       onPressed:
@@ -233,6 +244,7 @@ class _AiKeysPanelState extends ConsumerState<AiKeysPanel> {
                                 _saved[provider] = false;
                                 _latency.remove(provider);
                                 _keys[provider]!.clear();
+                                app.aiSettingsChanged();
                               }),
                       child: Text(tr(context, 'aiRemoveKey')),
                     ),

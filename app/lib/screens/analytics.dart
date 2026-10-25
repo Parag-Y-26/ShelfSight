@@ -8,6 +8,8 @@ import '../core/app_controller.dart';
 import '../core/strings.dart';
 import '../core/theme.dart';
 import '../widgets/shared.dart';
+import '../widgets/decision_panel.dart';
+import '../core/csv_export.dart';
 
 class AnalyticsScreen extends ConsumerStatefulWidget {
   const AnalyticsScreen({super.key, this.now = DateTime.now});
@@ -31,6 +33,41 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
   bool _fromCache = false;
   int _generation = 0;
   String? _storeId;
+  late final AppController _app;
+  String? _observedScope;
+  String _scope() =>
+      '${_app.identityGeneration}|${_app.store?['id']}|${_app.ledgerRevision}';
+  @override
+  void initState() {
+    super.initState();
+    _app = ref.read(appControllerProvider);
+    _observedScope = _scope();
+    _app.addListener(_ledgerChanged);
+  }
+
+  void _ledgerChanged() {
+    final scope = _scope();
+    if (scope == _observedScope) return;
+    _observedScope = scope;
+    ++_generation;
+    _data = null;
+    _errorKey = null;
+    _loading = false;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || scope != _scope()) return;
+      setState(() {
+        _storeId = _app.store?['id']?.toString();
+      });
+      _load();
+    });
+  }
+
+  @override
+  void dispose() {
+    _app.removeListener(_ledgerChanged);
+    ++_generation;
+    super.dispose();
+  }
 
   List<Map<String, dynamic>> _maps(dynamic value) =>
       value is List
@@ -89,7 +126,7 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
   }
 
   Future<void> _selectPeriod(Map<String, dynamic> period) async {
-    if (_loading) return;
+    if (_loading || _copying) return;
     final id = period['id']?.toString();
     if (id == null) return;
     if (period['days'] == null) {
@@ -151,7 +188,7 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
       }
       if (!mounted ||
           generation != _generation ||
-          identity != app.identityGeneration) {
+          (identity != app.identityGeneration || app.store?['id'] != storeId)) {
         return;
       }
       final value = _validated(cached?['value']);
@@ -171,14 +208,17 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
       final valid = _validated(response);
       if (valid == null) throw const FormatException('analytics_response');
       try {
-        if (!mounted || identity != app.identityGeneration) return;
+        if (!mounted ||
+            (identity != app.identityGeneration || app.store?['id'] != storeId)) {
+          return;
+        }
         await app.cacheValue(cacheKey, valid);
       } catch (_) {
         // Keep the successful online result visible when local storage fails.
       }
       if (!mounted ||
           generation != _generation ||
-          identity != app.identityGeneration) {
+          (identity != app.identityGeneration || app.store?['id'] != storeId)) {
         return;
       }
       setState(() {
@@ -203,7 +243,7 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
     }
   }
 
-  Future<void> _copyExport() async {
+  Future<void> _copyExport({bool share = false}) async {
     final app = ref.read(appControllerProvider);
     final identity = app.identityGeneration;
     final id = app.store?['id']?.toString();
@@ -219,9 +259,21 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
           'end': _end!.toIso8601String(),
         },
       );
-      if (!mounted || identity != app.identityGeneration) return;
-      await Clipboard.setData(ClipboardData(text: csv));
-      if (mounted) {
+      if (!mounted ||
+          (identity != app.identityGeneration || app.store?['id'] != id)) {
+        return;
+      }
+      if (share) {
+        final box = context.findRenderObject() as RenderBox;
+        await exportCsv(
+          csv,
+          'shelfsight_analytics_${_start!.toIso8601String().substring(0, 10)}.csv',
+          origin: box.localToGlobal(Offset.zero) & box.size,
+        );
+      } else {
+        await Clipboard.setData(ClipboardData(text: csv));
+      }
+      if (mounted && !share) {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text(tr(context, 'rsCsvCopied'))));
@@ -302,7 +354,7 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
   Widget build(BuildContext context) {
     final app = ref.watch(appControllerProvider);
     final theme = Theme.of(context);
-    final data = _data;
+    final data = _storeId == app.store?['id'] ? _data : null;
     final periods = _maps(app.config['periods']);
     final shelves = _maps(data?['shelves']);
     final ranking = [...shelves]..sort(
@@ -438,6 +490,22 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
                   ],
                 ),
                 const SizedBox(height: Tokens.md),
+                Wrap(
+                  spacing: Tokens.md,
+                  runSpacing: Tokens.md,
+                  children: [
+                    _metric(
+                      label: tr(context, 'meanDwell'),
+                      value: _seconds(_number(data['mean_dwell_seconds'])),
+                      icon: Icons.timelapse_outlined,
+                    ),
+                    _metric(
+                      label: tr(context, 'medianDwell'),
+                      value: _seconds(_number(data['median_dwell_seconds'])),
+                      icon: Icons.av_timer_outlined,
+                    ),
+                  ],
+                ),
                 InfoCard(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -661,6 +729,25 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
               ],
               const SizedBox(height: Tokens.md),
               _unavailable(
+                tr(context, 'slotExposure'),
+                Icons.visibility_outlined,
+              ),
+              Text(tr(context, 'slotExposureHelp')),
+              for (final item in inventory)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: Tokens.sm),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '${item['name']} · ${tr(context, 'rsRow')} ${item['row'] ?? tr(context, 'unknown')} / ${tr(context, 'rsSlot')} ${item['slot'] ?? tr(context, 'unknown')}',
+                      ),
+                      Text(_seconds(_number(item['slot_exposure_seconds']))),
+                    ],
+                  ),
+                ),
+              const SizedBox(height: Tokens.md),
+              _unavailable(
                 tr(context, 'rsEstimatedSales'),
                 Icons.payments_outlined,
               ),
@@ -672,6 +759,16 @@ class _AnalyticsScreenState extends ConsumerState<AnalyticsScreen> {
               const SizedBox(height: Tokens.md),
               _unavailable(tr(context, 'rsPutBack'), Icons.undo_outlined),
               const SizedBox(height: Tokens.lg),
+              const DecisionPanel(),
+              const SizedBox(height: Tokens.md),
+              BrandButton(
+                label: tr(context, 'shareCsv'),
+                icon: Icons.ios_share_outlined,
+                onPressed:
+                    _copying || _loading || data == null
+                        ? null
+                        : () => _copyExport(share: true),
+              ),
             ],
           ],
         ),

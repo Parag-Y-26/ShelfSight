@@ -2,18 +2,20 @@ import 'package:flutter/material.dart';
 
 abstract final class Tokens {
   static const navy = Color(0xFF071437);
-  static const blue = Color(0xFF0789F8);
-  static const teal = Color(0xFF00B5A6);
-  static const pale = Color(0xFFF0F8FD);
-  static const surface = Colors.white;
+  static const blue = Color(0xFF006874);
+  static const teal = Color(0xFF006874);
+  static const accent = Color(0xFF00838F);
+  static const pale = Color(0xFFEAF5FC);
+  static const surface = Color(0xFFF8FDFF);
   static const onAccent = Colors.white;
   static const transparent = Colors.transparent;
   static const scrim = Colors.black26;
   static const logoLarge = 148.0;
   static const logoSmall = 56.0;
-  static const muted = Color(0xFF657387);
-  static const line = Color(0xFFDCE7F0);
-  static const warning = Color(0xFFE79517);
+  static const muted = Color(0xFF435867);
+  static const line = Color(0xFF526E78);
+  static const warning = Color(0xFF805400);
+  static const live = Color(0xFF146C43);
   static const danger = Color(0xFFC92F48);
   static const xs = 4.0;
   static const sm = 8.0;
@@ -35,9 +37,11 @@ abstract final class Tokens {
 
 ThemeData buildTheme() {
   final scheme = ColorScheme.fromSeed(
-    seedColor: Tokens.teal,
-    primary: Tokens.teal,
-    secondary: Tokens.blue,
+    seedColor: Tokens.blue,
+    primary: Tokens.blue,
+    onPrimary: Colors.white,
+    secondary: Tokens.accent,
+    onSecondary: Colors.white,
     surface: Tokens.surface,
     error: Tokens.danger,
   );
@@ -45,8 +49,16 @@ ThemeData buildTheme() {
     useMaterial3: true,
     colorScheme: scheme,
     fontFamily: 'Inter',
+    materialTapTargetSize: MaterialTapTargetSize.padded,
+    visualDensity: VisualDensity.standard,
   );
   return base.copyWith(
+    iconButtonTheme: IconButtonThemeData(
+      style: IconButton.styleFrom(minimumSize: const Size(48, 48)),
+    ),
+    textButtonTheme: TextButtonThemeData(
+      style: TextButton.styleFrom(minimumSize: const Size(48, 48)),
+    ),
     scaffoldBackgroundColor: Tokens.pale,
     textTheme: base.textTheme.apply(
       bodyColor: Tokens.navy,
@@ -73,6 +85,7 @@ ThemeData buildTheme() {
     ),
     filledButtonTheme: FilledButtonThemeData(
       style: FilledButton.styleFrom(
+        minimumSize: const Size(48, 48),
         padding: const EdgeInsets.symmetric(
           horizontal: Tokens.lg,
           vertical: Tokens.md,
@@ -84,6 +97,7 @@ ThemeData buildTheme() {
     ),
     outlinedButtonTheme: OutlinedButtonThemeData(
       style: OutlinedButton.styleFrom(
+        minimumSize: const Size(48, 48),
         padding: const EdgeInsets.symmetric(
           horizontal: Tokens.lg,
           vertical: Tokens.md,

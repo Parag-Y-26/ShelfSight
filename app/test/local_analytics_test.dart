@@ -90,12 +90,15 @@ void main() {
         {'start': stamp(5), 'end': stamp(15)},
       );
       expect(result['visits'], 1);
+      expect(result['mean_dwell_seconds'], 10);
+      expect(result['median_dwell_seconds'], 10);
       expect(result['total_dwell_seconds'], 10);
       expect(result['coverage_seconds'], 9);
       expect(result['shelves'].single['exposure_seconds'], 9);
       expect(result['inventory'].single['quantity'], 3);
       expect(result['inventory'].single['low_stock_threshold'], 9);
       expect(result['inventory'].single['price_minor'], isNull);
+      expect(result['inventory'].single['slot_exposure_seconds'], isNull);
       final csv = exportLocalCsv(result);
       expect(csv, contains("'=entered-name"));
       expect(csv, contains("'=unsafe-test-label"));

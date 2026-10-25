@@ -37,7 +37,50 @@ class StoreSelectionApi extends PendingApi {
       (snapshots[path] ??= Completer<dynamic>()).future;
 }
 
+class WipeApi extends PendingApi {
+  @override
+  Future<dynamic> delete(String path) async => null;
+}
+
+class PausedEraseCache extends MemoryCache {
+  final entered = Completer<void>(), resume = Completer<void>();
+  bool first = true;
+  @override
+  Future<void> erase() async {
+    if (first) {
+      first = false;
+      entered.complete();
+      await resume.future;
+    }
+    await super.erase();
+  }
+}
+
 void main() {
+  test(
+    'a wipe finishing after cache erase cannot clear the next profile',
+    () async {
+      final cache = PausedEraseCache();
+      final app = AppController.forTesting(
+        api: WipeApi(),
+        cache: cache,
+        store: {'id': 'old-profile-store'},
+      );
+      final pending = app.deleteAllStoreData();
+      final rejected = expectLater(pending, throwsA(isA<ApiFailure>()));
+      await cache.entered.future;
+      await app.disconnect();
+      app.store = {'id': 'new-profile-store'};
+      app.products = [
+        {'id': 'new-private-product'},
+      ];
+      cache.resume.complete();
+      await rejected;
+      expect(app.store?['id'], 'new-profile-store');
+      expect(app.products.single['id'], 'new-private-product');
+      app.dispose();
+    },
+  );
   test('a late store snapshot cannot undo a newer store selection', () async {
     final api = StoreSelectionApi();
     final cache = MemoryCache();

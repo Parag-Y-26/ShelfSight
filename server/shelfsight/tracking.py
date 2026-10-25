@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Protocol
 
+from .geometry import zone_contains
 from .providers import Detection
 
 
@@ -70,8 +71,7 @@ class ZoneTracker:
         x, y = (detection.bbox[0] + detection.bbox[2]) / 2, detection.bbox[3]
         for zone in self.zones:
             if (
-                zone["x"] <= x <= zone["x"] + zone["width"]
-                and zone["y"] <= y <= zone["y"] + zone["height"]
+                zone_contains(zone, x, y)
                 and detection.confidence
                 >= self._settings(zone["shelf_id"])["detection_confidence_threshold"]
             ):

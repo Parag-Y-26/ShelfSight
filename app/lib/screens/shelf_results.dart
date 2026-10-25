@@ -498,7 +498,7 @@ class _ShelfResultsScreenState extends ConsumerState<ShelfResultsScreen> {
             if (draft.product[key] != null) key: draft.product[key],
           'source':
               draft.product['source'] ??
-              (widget.candidates == null ? 'manual' : 'gemini_reviewed'),
+              (widget.candidates == null ? 'manual' : 'ai_reviewed'),
         };
         if (draft.productId == null) {
           final saved = await app.repository.post(
@@ -518,6 +518,37 @@ class _ShelfResultsScreenState extends ConsumerState<ShelfResultsScreen> {
           draft.productDirty = false;
         }
         if (!mounted || identity != app.identityGeneration) return;
+      }
+      final updates = [
+        for (final draft in _drafts)
+          if (draft.itemId != null && draft.dirty)
+            {
+              'id': draft.itemId,
+              'row': draft.row,
+              'slot': draft.slot,
+              'quantity': draft.quantity,
+            },
+      ];
+      final desiredRows =
+          _drafts.isEmpty
+              ? null
+              : _drafts.map((d) => d.row!).reduce((a, b) => a > b ? a : b);
+      final currentRows =
+          app.shelves.where((s) => s['id'] == _shelfId).firstOrNull?['rows']
+              as num?;
+      final expand =
+          desiredRows != null &&
+          currentRows != null &&
+          desiredRows > currentRows;
+      if (updates.isNotEmpty || expand) {
+        await app.repository.post(
+          '/shelves/${Uri.encodeComponent(_shelfId)}/planogram',
+          {'items': updates, if (expand) 'rows': desiredRows},
+        );
+        if (!mounted || identity != app.identityGeneration) return;
+      }
+      for (final draft in _drafts) {
+        if (!mounted || identity != app.identityGeneration) return;
         final itemPayload = {
           'product_id': draft.productId,
           'row': draft.row,
@@ -532,12 +563,6 @@ class _ShelfResultsScreenState extends ConsumerState<ShelfResultsScreen> {
           final id = saved is Map ? saved['id']?.toString() : null;
           if (id == null) throw StateError('missing_item_id');
           draft.itemId = id;
-        } else if (draft.dirty) {
-          await app.repository.patch('/items/${Uri.encodeComponent(draft.itemId!)}', {
-            'row': draft.row,
-            'slot': draft.slot,
-            'quantity': draft.quantity,
-          });
         }
         draft.dirty = false;
       }
@@ -546,9 +571,10 @@ class _ShelfResultsScreenState extends ConsumerState<ShelfResultsScreen> {
         final rows = _drafts
             .map((draft) => draft.row ?? 1)
             .reduce((a, b) => a > b ? a : b);
-        await app.repository.patch('/shelves/${Uri.encodeComponent(_shelfId)}', {
-          'rows': rows,
-        });
+        await app.repository.patch(
+          '/shelves/${Uri.encodeComponent(_shelfId)}',
+          {'rows': rows},
+        );
       }
       if (!mounted || identity != app.identityGeneration) return;
       await app.refresh();

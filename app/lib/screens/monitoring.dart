@@ -11,6 +11,8 @@ import '../core/theme.dart';
 import '../vision/geometry.dart';
 import '../vision/monitoring_controller.dart';
 import '../widgets/shared.dart';
+import '../widgets/evaluation_replay.dart';
+import '../widgets/zone_editor.dart';
 
 class MonitoringScreen extends ConsumerStatefulWidget {
   const MonitoringScreen({super.key});
@@ -23,6 +25,8 @@ class _MonitoringScreenState extends ConsumerState<MonitoringScreen>
   late final MonitoringController _model;
   Offset? _drawStart;
   Rect? _draft;
+  bool _polygonMode = false;
+  final _points = <Offset>[];
   Future<void>? _suspending;
   bool _foreground = true;
 
@@ -46,6 +50,7 @@ class _MonitoringScreenState extends ConsumerState<MonitoringScreen>
     if (!_foreground) {
       _drawStart = null;
       _draft = null;
+      _points.clear();
       _suspending ??= _model.suspend().whenComplete(() {
         _suspending = null;
       });
@@ -88,7 +93,7 @@ class _MonitoringScreenState extends ConsumerState<MonitoringScreen>
   Widget build(BuildContext context) {
     final app = ref.watch(appControllerProvider);
     final model = _model;
-    final live = model.phase == MonitorPhase.live && app.monitoringActive;
+    final live = model.phase == MonitorPhase.live && app.monitoringLive;
     final status = switch (model.phase) {
       MonitorPhase.initializing => 'monitorInitializing',
       MonitorPhase.calibrating => 'monitorCalibrationState',
@@ -109,18 +114,21 @@ class _MonitoringScreenState extends ConsumerState<MonitoringScreen>
       ],
       bottom: BrandButton(
         label: tr(context, model.running ? 'monitorStop' : 'monitorStart'),
-        icon: model.running
-            ? Icons.stop_circle_outlined
-            : Icons.play_arrow_rounded,
-        onPressed: model.running
-            ? () => unawaited(model.stop())
-            : model.canStart
-            ? () => unawaited(model.start())
-            : null,
+        icon:
+            model.running
+                ? Icons.stop_circle_outlined
+                : Icons.play_arrow_rounded,
+        onPressed:
+            model.running
+                ? () => unawaited(model.stop())
+                : model.canStart
+                ? () => unawaited(model.start())
+                : null,
       ),
       child: ListView(
         padding: const EdgeInsets.all(Tokens.md),
         children: [
+          const EvaluationReplayCard(),
           InfoCard(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -150,7 +158,10 @@ class _MonitoringScreenState extends ConsumerState<MonitoringScreen>
                 ),
                 const SizedBox(height: Tokens.sm),
                 Text(
-                  tr(context, app.isStandalone ? 'localMonitorPrivacy' : 'monitorPrivacy'),
+                  tr(
+                    context,
+                    app.isStandalone ? 'localMonitorPrivacy' : 'monitorPrivacy',
+                  ),
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
                 if (model.errorKey != null)
@@ -167,9 +178,10 @@ class _MonitoringScreenState extends ConsumerState<MonitoringScreen>
                     BrandButton(
                       label: tr(context, 'monitorRetryCamera'),
                       icon: Icons.videocam,
-                      onPressed: () => unawaited(
-                        model.suspend().then((_) => model.initialize()),
-                      ),
+                      onPressed:
+                          () => unawaited(
+                            model.suspend().then((_) => model.initialize()),
+                          ),
                       outlined: true,
                     ),
                 ],
@@ -180,9 +192,10 @@ class _MonitoringScreenState extends ConsumerState<MonitoringScreen>
                       tr(context, 'monitorCaptureInfo', {
                         'width': _number(model.frameWidth),
                         'height': _number(model.frameHeight),
-                        'interval': model.intervalMs == null
-                            ? tr(context, 'monitorUnknown')
-                            : _number(model.intervalMs!),
+                        'interval':
+                            model.intervalMs == null
+                                ? tr(context, 'monitorUnknown')
+                                : _number(model.intervalMs!),
                       }),
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
@@ -201,28 +214,97 @@ class _MonitoringScreenState extends ConsumerState<MonitoringScreen>
                   ),
                   const SizedBox(height: Tokens.sm),
                   Text(tr(context, 'monitorCalibrationHelp')),
+                  Wrap(
+                    spacing: Tokens.sm,
+                    runSpacing: Tokens.sm,
+                    children: [
+                      ChoiceChip(
+                        label: Text(tr(context, 'rectangleZone')),
+                        selected: !_polygonMode,
+                        onSelected:
+                            model.running
+                                ? null
+                                : (_) => setState(() {
+                                  _polygonMode = false;
+                                  _points.clear();
+                                }),
+                      ),
+                      ChoiceChip(
+                        label: Text(tr(context, 'polygonZone')),
+                        selected: _polygonMode,
+                        onSelected:
+                            model.running
+                                ? null
+                                : (_) => setState(() {
+                                  _polygonMode = true;
+                                  _points.clear();
+                                }),
+                      ),
+                      TextButton.icon(
+                        onPressed:
+                            model.running || model.selectedShelfId == null
+                                ? null
+                                : () => editCameraZone(
+                                  context,
+                                  model,
+                                  polygon: _polygonMode,
+                                ),
+                        icon: const Icon(Icons.edit_outlined),
+                        label: Text(tr(context, 'manualZone')),
+                      ),
+                      if (_polygonMode)
+                        TextButton(
+                          onPressed:
+                              model.running || _points.length < 3
+                                  ? null
+                                  : () {
+                                    model.setPolygon(_points);
+                                    if (model.errorKey == null) {
+                                      setState(_points.clear);
+                                    }
+                                  },
+                          child: Text(tr(context, 'finishPolygon')),
+                        ),
+                      if (_polygonMode)
+                        TextButton(
+                          onPressed:
+                              model.running || _points.isEmpty
+                                  ? null
+                                  : () => setState(_points.removeLast),
+                          child: Text(tr(context, 'undoVertex')),
+                        ),
+                    ],
+                  ),
+                  if (_polygonMode) Text(tr(context, 'polygonHelp')),
                   const SizedBox(height: Tokens.md),
                   DropdownButtonFormField<String>(
                     initialValue:
                         app.shelves.any((s) => s['id'] == model.selectedShelfId)
-                        ? model.selectedShelfId
-                        : null,
+                            ? model.selectedShelfId
+                            : null,
                     isExpanded: true,
                     decoration: InputDecoration(
                       labelText: tr(context, 'monitorSelectShelf'),
                     ),
-                    items: app.shelves
-                        .map(
-                          (s) => DropdownMenuItem<String>(
-                            value: s['id'].toString(),
-                            child: Text(
-                              s['name']?.toString() ?? '',
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                        )
-                        .toList(),
-                    onChanged: model.saving ? null : model.selectShelf,
+                    items:
+                        app.shelves
+                            .map(
+                              (s) => DropdownMenuItem<String>(
+                                value: s['id'].toString(),
+                                child: Text(
+                                  s['name']?.toString() ?? '',
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            )
+                            .toList(),
+                    onChanged:
+                        model.saving
+                            ? null
+                            : (id) {
+                              setState(_points.clear);
+                              model.selectShelf(id);
+                            },
                   ),
                   const SizedBox(height: Tokens.sm),
                   Text(
@@ -234,26 +316,29 @@ class _MonitoringScreenState extends ConsumerState<MonitoringScreen>
                     Wrap(
                       spacing: Tokens.sm,
                       runSpacing: Tokens.xs,
-                      children: model.zones
-                          .map(
-                            (zone) => InputChip(
-                              label: Text(_shelfName(zone.shelfId)),
-                              selected: zone.shelfId == model.selectedShelfId,
-                              onSelected: (_) =>
-                                  model.selectShelf(zone.shelfId),
-                              onDeleted: model.saving
-                                  ? null
-                                  : () {
-                                      model.selectShelf(zone.shelfId);
-                                      model.removeZone();
-                                    },
-                              deleteButtonTooltipMessage: tr(
-                                context,
-                                'monitorRemoveZone',
-                              ),
-                            ),
-                          )
-                          .toList(),
+                      children:
+                          model.zones
+                              .map(
+                                (zone) => InputChip(
+                                  label: Text(_shelfName(zone.shelfId)),
+                                  selected:
+                                      zone.shelfId == model.selectedShelfId,
+                                  onSelected:
+                                      (_) => model.selectShelf(zone.shelfId),
+                                  onDeleted:
+                                      model.saving
+                                          ? null
+                                          : () {
+                                            model.selectShelf(zone.shelfId);
+                                            model.removeZone();
+                                          },
+                                  deleteButtonTooltipMessage: tr(
+                                    context,
+                                    'monitorRemoveZone',
+                                  ),
+                                ),
+                              )
+                              .toList(),
                     ),
                   const SizedBox(height: Tokens.md),
                   BrandButton(
@@ -263,28 +348,35 @@ class _MonitoringScreenState extends ConsumerState<MonitoringScreen>
                           ? 'monitorCalibrationSaved'
                           : 'monitorSaveCalibration',
                     ),
-                    icon: model.calibrated
-                        ? Icons.check_circle_outline
-                        : Icons.save_outlined,
+                    icon:
+                        model.calibrated
+                            ? Icons.check_circle_outline
+                            : Icons.save_outlined,
                     onPressed:
                         model.cameraReady &&
-                            validZones(model.zones) &&
-                            !model.saving &&
-                            !model.calibrated
-                        ? () => unawaited(model.saveCalibration())
-                        : null,
+                                validZones(model.zones) &&
+                                !model.saving &&
+                                !model.calibrated
+                            ? () => unawaited(model.saveCalibration())
+                            : null,
                   ),
                   if (model.calibrated)
                     CheckboxListTile(
                       contentPadding: EdgeInsets.zero,
                       value: model.cameraConfirmed,
-                      onChanged: (value) =>
-                          model.setCameraConfirmed(value ?? false),
+                      onChanged:
+                          (value) => model.setCameraConfirmed(value ?? false),
                       title: Text(tr(context, 'monitorCameraFixed')),
                       subtitle: Text(tr(context, 'monitorRecalibrateMoved')),
                     ),
                   TextButton.icon(
-                    onPressed: model.saving ? null : model.resetCalibration,
+                    onPressed:
+                        model.saving
+                            ? null
+                            : () {
+                              setState(_points.clear);
+                              model.resetCalibration();
+                            },
                     icon: const Icon(Icons.crop_free),
                     label: Text(tr(context, 'monitorResetCalibration')),
                   ),
@@ -385,9 +477,10 @@ class _MonitoringScreenState extends ConsumerState<MonitoringScreen>
 
   Widget _preview() {
     final camera = _model.camera!;
-    final aspectRatio = _model.frameWidth > 0 && _model.frameHeight > 0
-        ? _model.frameWidth / _model.frameHeight
-        : camera.value.aspectRatio;
+    final aspectRatio =
+        _model.frameWidth > 0 && _model.frameHeight > 0
+            ? _model.frameWidth / _model.frameHeight
+            : camera.value.aspectRatio;
     final drawEnabled =
         !_model.running && !_model.changing && _model.selectedShelfId != null;
     return ClipRRect(
@@ -408,40 +501,54 @@ class _MonitoringScreenState extends ConsumerState<MonitoringScreen>
                   label: tr(context, 'monitorPreviewSemantics'),
                   child: GestureDetector(
                     behavior: HitTestBehavior.opaque,
-                    onPanStart: drawEnabled
-                        ? (details) {
-                            _drawStart = point(details.localPosition);
-                            setState(() {
-                              _draft = null;
-                            });
-                          }
-                        : null,
-                    onPanUpdate: drawEnabled
-                        ? (details) {
-                            final start = _drawStart;
-                            if (start == null) return;
-                            setState(() {
-                              _draft = Rect.fromPoints(
-                                start,
-                                point(details.localPosition),
-                              );
-                            });
-                          }
-                        : null,
-                    onPanEnd: drawEnabled
-                        ? (_) {
-                            final draft = _draft;
-                            _drawStart = null;
-                            setState(() {
-                              _draft = null;
-                            });
-                            if (draft != null &&
-                                draft.width > 0 &&
-                                draft.height > 0) {
-                              _model.setZone(draft);
+                    onTapDown:
+                        drawEnabled && _polygonMode
+                            ? (details) {
+                              if (_points.length < 32) {
+                                setState(
+                                  () =>
+                                      _points.add(point(details.localPosition)),
+                                );
+                              }
                             }
-                          }
-                        : null,
+                            : null,
+                    onPanStart:
+                        drawEnabled && !_polygonMode
+                            ? (details) {
+                              _drawStart = point(details.localPosition);
+                              setState(() {
+                                _draft = null;
+                              });
+                            }
+                            : null,
+                    onPanUpdate:
+                        drawEnabled && !_polygonMode
+                            ? (details) {
+                              final start = _drawStart;
+                              if (start == null) return;
+                              setState(() {
+                                _draft = Rect.fromPoints(
+                                  start,
+                                  point(details.localPosition),
+                                );
+                              });
+                            }
+                            : null,
+                    onPanEnd:
+                        drawEnabled && !_polygonMode
+                            ? (_) {
+                              final draft = _draft;
+                              _drawStart = null;
+                              setState(() {
+                                _draft = null;
+                              });
+                              if (draft != null &&
+                                  draft.width > 0 &&
+                                  draft.height > 0) {
+                                _model.setZone(draft);
+                              }
+                            }
+                            : null,
                     onPanCancel: () {
                       _drawStart = null;
                       setState(() {
@@ -450,6 +557,7 @@ class _MonitoringScreenState extends ConsumerState<MonitoringScreen>
                     },
                     child: CustomPaint(
                       painter: _CameraOverlay(
+                        draftPoints: _points.toList(),
                         zones: _model.zones,
                         draft: _draft,
                         selectedShelfId: _model.selectedShelfId,
@@ -459,8 +567,8 @@ class _MonitoringScreenState extends ConsumerState<MonitoringScreen>
                                 shelf['name']?.toString() ?? '',
                         },
                         tracks: _model.tracks,
-                        trackLabel: (id) =>
-                            tr(context, 'monitorTrack', {'id': id}),
+                        trackLabel:
+                            (id) => tr(context, 'monitorTrack', {'id': id}),
                         textStyle:
                             Theme.of(context).textTheme.labelSmall ??
                             const TextStyle(),
@@ -487,8 +595,9 @@ class _MeasuredValue extends StatelessWidget {
       Text(label, style: Theme.of(context).textTheme.bodySmall),
       Text(
         value,
-        style: Theme.of(context).textTheme.titleMedium
-            ?.copyWith(color: Tokens.teal),
+        style: Theme.of(
+          context,
+        ).textTheme.titleMedium?.copyWith(color: Tokens.teal),
       ),
     ],
   );
@@ -515,9 +624,10 @@ class _EventRow extends StatelessWidget {
     final rawTime = event['ended_at'] ?? event['server_timestamp'];
     final timestamp = rawTime is String ? DateTime.tryParse(rawTime) : null;
     final locale = Localizations.localeOf(context).toLanguageTag();
-    final time = timestamp == null
-        ? tr(context, 'monitorUnknown')
-        : DateFormat.yMd(locale).add_jm().format(timestamp.toLocal());
+    final time =
+        timestamp == null
+            ? tr(context, 'monitorUnknown')
+            : DateFormat.yMd(locale).add_jm().format(timestamp.toLocal());
     return ListTile(
       contentPadding: EdgeInsets.zero,
       leading: Icon(
@@ -536,19 +646,21 @@ class _EventRow extends StatelessWidget {
           {'time': time},
         ),
       ),
-      trailing: type == 'visit' && finiteNumber(event['dwell_seconds']) != null
-          ? Text(
-              tr(context, 'monitorSeconds', {
-                'value': number(finiteNumber(event['dwell_seconds'])!),
-              }),
-            )
-          : null,
+      trailing:
+          type == 'visit' && finiteNumber(event['dwell_seconds']) != null
+              ? Text(
+                tr(context, 'monitorSeconds', {
+                  'value': number(finiteNumber(event['dwell_seconds'])!),
+                }),
+              )
+              : null,
     );
   }
 }
 
 class _CameraOverlay extends CustomPainter {
   const _CameraOverlay({
+    this.draftPoints = const [],
     required this.zones,
     required this.draft,
     required this.selectedShelfId,
@@ -558,6 +670,7 @@ class _CameraOverlay extends CustomPainter {
     required this.textStyle,
   });
   final List<CameraZone> zones;
+  final List<Offset> draftPoints;
   final Rect? draft;
   final String? selectedShelfId;
   final Map<String, String> names;
@@ -575,18 +688,22 @@ class _CameraOverlay extends CustomPainter {
     );
     for (final zone in zones) {
       final rect = pixels(zone.rect);
-      canvas.drawRect(
-        rect,
+      final path =
+          Path()..addPolygon([
+            for (final p in zone.vertices)
+              Offset(p.dx * size.width, p.dy * size.height),
+          ], true);
+      canvas.drawPath(
+        path,
         Paint()..color = Tokens.teal.withValues(alpha: 0.16),
       );
-      canvas.drawRect(
-        rect,
+      canvas.drawPath(
+        path,
         Paint()
           ..color = Tokens.teal
           ..style = PaintingStyle.stroke
-          ..strokeWidth = zone.shelfId == selectedShelfId
-              ? Tokens.xs
-              : Tokens.xs / 2,
+          ..strokeWidth =
+              zone.shelfId == selectedShelfId ? Tokens.xs : Tokens.xs / 2,
       );
       _label(
         canvas,
@@ -605,6 +722,27 @@ class _CameraOverlay extends CustomPainter {
           ..strokeWidth = Tokens.xs / 2,
       );
     }
+    if (draftPoints.isNotEmpty) {
+      final path =
+          Path()..addPolygon([
+            for (final p in draftPoints)
+              Offset(p.dx * size.width, p.dy * size.height),
+          ], false);
+      canvas.drawPath(
+        path,
+        Paint()
+          ..color = Tokens.warning
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 3,
+      );
+      for (final p in draftPoints) {
+        canvas.drawCircle(
+          Offset(p.dx * size.width, p.dy * size.height),
+          4,
+          Paint()..color = Tokens.warning,
+        );
+      }
+    }
     for (final track in tracks) {
       final box = track['bbox'];
       if (box is! List || box.length != 4) continue;
@@ -614,6 +752,9 @@ class _CameraOverlay extends CustomPainter {
         Rect.fromLTRB(values[0]!, values[1]!, values[2]!, values[3]!),
       );
       if (rect.width <= 0 || rect.height <= 0) continue;
+      final bottomCenter = Offset(rect.center.dx, rect.bottom);
+      canvas.drawCircle(bottomCenter, 6, Paint()..color = Tokens.navy);
+      canvas.drawCircle(bottomCenter, 4, Paint()..color = Tokens.surface);
       canvas.drawRect(
         rect,
         Paint()

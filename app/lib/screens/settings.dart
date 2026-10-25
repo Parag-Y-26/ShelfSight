@@ -89,6 +89,38 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     });
   }
 
+  Future<void> _deleteAll() async {
+    final app = ref.read(appControllerProvider);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder:
+          (dialog) => AlertDialog(
+            title: Text(tr(context, 'deleteAllStoreData')),
+            content: SingleChildScrollView(
+              child: Text(
+                tr(context, 'deleteAllStoreDataWarning', {
+                  'backend':
+                      app.isStandalone
+                          ? tr(context, 'localModeTitle')
+                          : app.api.serverAddress ?? tr(context, 'notPaired'),
+                }),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialog, false),
+                child: Text(tr(context, 'cancel')),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(dialog, true),
+                child: Text(tr(context, 'deleteAllStoreData')),
+              ),
+            ],
+          ),
+    );
+    if (confirmed == true && mounted) await _run(app.deleteAllStoreData);
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = ref.watch(appControllerProvider);
@@ -471,6 +503,20 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       style: const TextStyle(color: Tokens.danger),
                     ),
                   ),
+                TextButton.icon(
+                  onPressed:
+                      _busy || c.monitoringActive || !c.ready
+                          ? null
+                          : _deleteAll,
+                  icon: const Icon(
+                    Icons.delete_sweep_outlined,
+                    color: Tokens.danger,
+                  ),
+                  label: Text(
+                    tr(context, 'deleteAllStoreData'),
+                    style: const TextStyle(color: Tokens.danger),
+                  ),
+                ),
               ],
             ),
           ),
@@ -503,39 +549,90 @@ class _ThresholdDialogState extends State<_ThresholdDialog> {
   }
 
   @override
-  Widget build(BuildContext context) => AlertDialog(
-    title: Text(tr(context, 'threshold_${widget.settingKey}')),
-    content: Form(
-      key: _form,
-      child: TextFormField(
-        controller: _input,
-        keyboardType: const TextInputType.numberWithOptions(decimal: true),
-        decoration: InputDecoration(labelText: tr(context, 'settingValue')),
-        validator: (value) {
-          final number = num.tryParse(value ?? '');
-          try {
-            if (number == null) throw const FormatException();
-            widget.configuration.validate({widget.settingKey: number});
-          } on FormatException {
-            return tr(context, 'invalidSetting');
-          }
-          return null;
-        },
+  Widget build(BuildContext context) {
+    final rule =
+        widget.configuration.schema['setting_rules'][widget.settingKey] as Map;
+    final minimum =
+        (rule['min'] as num?)?.toDouble() ??
+        ((rule['exclusive_min'] as num?)?.toDouble() ?? 0) +
+            (rule['type'] == 'integer' ? 1 : .001);
+    final maximum = (rule['max'] as num?)?.toDouble();
+    final value =
+        num.tryParse(_input.text)?.toDouble() ?? widget.value.toDouble();
+    return AlertDialog(
+      title: Text(tr(context, 'threshold_${widget.settingKey}')),
+      content: SingleChildScrollView(
+        child: Form(
+          key: _form,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextFormField(
+                controller: _input,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                decoration: InputDecoration(
+                  labelText: tr(context, 'settingValue'),
+                ),
+                onChanged: (_) => setState(() {}),
+                validator: (text) {
+                  try {
+                    final number = num.tryParse(text ?? '');
+                    if (number == null) throw const FormatException();
+                    widget.configuration.validate({widget.settingKey: number});
+                    return null;
+                  } on FormatException {
+                    return tr(context, 'invalidSetting');
+                  }
+                },
+              ),
+              if (maximum != null && maximum > minimum)
+                Semantics(
+                  label: tr(context, 'threshold_${widget.settingKey}'),
+                  child: Slider(
+                    min: minimum,
+                    max: maximum,
+                    value: value.clamp(minimum, maximum),
+                    divisions:
+                        rule['type'] == 'integer' && maximum - minimum <= 1000
+                            ? (maximum - minimum).round()
+                            : null,
+                    label: value.toStringAsFixed(
+                      rule['type'] == 'integer' ? 0 : 2,
+                    ),
+                    semanticFormatterCallback:
+                        (v) => v.toStringAsFixed(
+                          rule['type'] == 'integer' ? 0 : 2,
+                        ),
+                    onChanged:
+                        (v) => setState(
+                          () =>
+                              _input.text =
+                                  rule['type'] == 'integer'
+                                      ? v.round().toString()
+                                      : v.toStringAsFixed(3),
+                        ),
+                  ),
+                ),
+            ],
+          ),
+        ),
       ),
-    ),
-    actions: [
-      TextButton(
-        onPressed: () => Navigator.pop(context),
-        child: Text(tr(context, 'cancel')),
-      ),
-      TextButton(
-        onPressed: () {
-          if (_form.currentState?.validate() == true) {
-            Navigator.pop(context, num.parse(_input.text));
-          }
-        },
-        child: Text(tr(context, 'save')),
-      ),
-    ],
-  );
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: Text(tr(context, 'cancel')),
+        ),
+        TextButton(
+          onPressed: () {
+            if (_form.currentState?.validate() == true) {
+              Navigator.pop(context, num.parse(_input.text));
+            }
+          },
+          child: Text(tr(context, 'save')),
+        ),
+      ],
+    );
+  }
 }
